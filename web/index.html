@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>六级背单词</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">📚 六级背单词</div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-view="study">学习</button>
+      <button class="tab" data-view="wordbook">单词本</button>
+      <button class="tab" data-view="glossary">词表</button>
+      <button class="tab" data-view="stats">统计</button>
+      <button class="tab" data-view="settings">设置</button>
+    </nav>
+    <div class="goal" id="goalBadge" title="今日学习进度"></div>
+  </header>
+
+  <main>
+    <!-- ========== 学习 ========== -->
+    <section id="view-study" class="view active">
+      <!-- 准备界面 -->
+      <div id="studySetup" class="panel">
+        <h2>开始学习</h2>
+        <div class="mode-grid">
+          <button class="mode-card" data-mode="en2zh">
+            <span class="mode-emoji">🇬🇧→🇨🇳</span>
+            <span class="mode-name">英译中</span>
+            <span class="mode-desc">看英文选中文释义</span>
+          </button>
+          <button class="mode-card" data-mode="zh2en">
+            <span class="mode-emoji">🇨🇳→🇬🇧</span>
+            <span class="mode-name">中译英 · 选择</span>
+            <span class="mode-desc">看中文选英文单词</span>
+          </button>
+          <button class="mode-card" data-mode="spell">
+            <span class="mode-emoji">✍️</span>
+            <span class="mode-name">中译英 · 拼写</span>
+            <span class="mode-desc">看中文，输入英文单词</span>
+          </button>
+          <button class="mode-card" data-mode="card">
+            <span class="mode-emoji">🃏</span>
+            <span class="mode-name">卡片模式</span>
+            <span class="mode-desc">翻卡片自测回忆</span>
+          </button>
+        </div>
+
+        <div class="field">
+          <label>学习范围</label>
+          <select id="quizScope">
+            <option value="all">全部单词</option>
+            <option value="new">未学过的单词</option>
+            <option value="wrong">答错过(生词)</option>
+            <option value="wordbook">单词本中的词</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>题目数量</label>
+          <select id="quizCount">
+            <option value="10">10 题</option>
+            <option value="20" selected>20 题</option>
+            <option value="30">30 题</option>
+            <option value="50">50 题</option>
+          </select>
+        </div>
+        <button class="btn primary big" id="startQuiz">开始学习</button>
+      </div>
+
+      <!-- 答题界面 -->
+      <div id="studyQuiz" class="panel hidden">
+        <div class="quiz-top">
+          <span id="quizProgressText">第 1 / 20 题</span>
+          <div class="progress"><div id="quizProgressBar"></div></div>
+          <button class="btn ghost small" id="quizQuit">结束</button>
+        </div>
+        <div class="card" id="quizCard">
+          <div class="card-word" id="quizWord">—</div>
+          <div class="card-phonetic" id="quizPhonetic"></div>
+          <div class="card-meaning hidden" id="quizMeaning"></div>
+        </div>
+        <div class="options" id="quizOptions"></div>
+        <div class="feedback hidden" id="quizFeedback"></div>
+        <button class="btn primary big hidden" id="quizNext">下一题 →</button>
+      </div>
+
+      <!-- 结果界面 -->
+      <div id="studySummary" class="panel hidden">
+        <h2 id="summaryTitle">本组完成！</h2>
+        <div class="summary-stats" id="summaryStats"></div>
+        <div id="summaryWrong" class="summary-wrong"></div>
+        <div class="row">
+          <button class="btn primary" id="summaryRetry">重练错词</button>
+          <button class="btn" id="summaryAgain">再来一组</button>
+          <button class="btn ghost" id="summaryHome">返回</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 单词本 ========== -->
+    <section id="view-wordbook" class="view">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>📒 我的单词本</h2>
+          <div class="head-actions">
+            <span class="muted" id="wbCount"></span>
+            <button class="btn primary" id="wbReview">复习单词本</button>
+          </div>
+        </div>
+        <div class="list-filter">
+          <input type="search" id="wbSearch" placeholder="搜索单词或释义…">
+          <select id="wbFilter">
+            <option value="all">全部</option>
+            <option value="learning">学习中</option>
+            <option value="mastered">已掌握</option>
+          </select>
+        </div>
+        <div id="wbList" class="list"></div>
+        <div id="wbEmpty" class="empty hidden">单词本还是空的～ 学习时答错的词会自动加入，也可以在「词表」里手动收藏。</div>
+      </div>
+    </section>
+
+    <!-- ========== 词表 ========== -->
+    <section id="view-glossary" class="view">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>📖 全部词表 <span class="muted" id="glCount"></span></h2>
+        </div>
+        <div class="list-filter">
+          <input type="search" id="glSearch" placeholder="搜索英文单词或中文释义…">
+        </div>
+        <div id="glList" class="list"></div>
+        <div id="glEmpty" class="empty hidden">没有找到匹配的单词。</div>
+      </div>
+    </section>
+
+    <!-- ========== 统计 ========== -->
+    <section id="view-stats" class="view">
+      <div class="panel">
+        <h2>📊 学习统计</h2>
+        <div class="stat-grid" id="statGrid"></div>
+        <h3>最近 7 天</h3>
+        <div class="bars" id="statBars"></div>
+      </div>
+    </section>
+
+    <!-- ========== 设置 ========== -->
+    <section id="view-settings" class="view">
+      <div class="panel">
+        <h2>⚙️ 设置</h2>
+
+        <div class="field">
+          <label>每日目标（题数）</label>
+          <div class="row">
+            <input type="number" id="setGoal" min="5" max="500" value="20">
+            <button class="btn primary" id="saveGoal">保存</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label><input type="checkbox" id="setAutoAdd" checked> 答错的词自动加入单词本</label>
+        </div>
+
+        <hr>
+        <h3>➕ 添加自定义单词</h3>
+        <div class="form-grid">
+          <input type="text" id="addWord" placeholder="单词，如：algorithm">
+          <input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）">
+          <input type="text" id="addMeaning" placeholder="释义，如：n. 算法">
+        </div>
+        <button class="btn primary" id="addWordBtn">添加单词</button>
+
+        <hr>
+        <h3>📥 导入词表</h3>
+        <p class="muted">每行一个单词，格式：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。导入的词会加入自定义词库，可参与学习。</p>
+        <textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试"></textarea>
+        <div class="row">
+          <button class="btn" id="importBtn">导入</button>
+        </div>
+
+        <hr>
+        <h3>💾 数据备份</h3>
+        <div class="row">
+          <button class="btn" id="exportBtn">导出学习数据</button>
+          <label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label>
+        </div>
+
+        <hr>
+        <h3 class="danger">🗑 危险操作</h3>
+        <div class="row">
+          <button class="btn danger" id="resetBtn">清空所有学习数据</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
