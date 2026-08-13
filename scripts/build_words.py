@@ -10,8 +10,9 @@ import re
 import unicodedata
 from pathlib import Path
 
-RAW = Path("data/CET6_edited_raw.txt")
-OUT = Path("data/words.json")
+BASE = Path(__file__).resolve().parent.parent
+RAW = BASE / "data" / "CET6_edited_raw.txt"
+OUT = BASE / "data" / "words.json"
 
 PHON = re.compile(r"\[([^\]]*)\]")
 IPA_CHAR = re.compile(r"[\u02c8\u02cc\u0259\u00e6\u0251\u0254\u026a\u028a\u025c\u02d0\u0252\u03b8\u00f0\u014b\u0283\u0292\u028c\u025b\u026a]")

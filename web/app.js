@@ -32,6 +32,11 @@ let SETTINGS = null;       // { dailyGoal, autoAddWrong }
 
 const q = { mode: null, pool: [], idx: 0, correct: 0, wrongList: [], options: [], answered: false };
 let QUIZ_ACTIVE = false;
+let quizTimer = null;      // 卡片模式自动跳题定时器
+
+function clearQuizTimer() {
+  if (quizTimer) { clearTimeout(quizTimer); quizTimer = null; }
+}
 
 /* ---------- 工具 ---------- */
 const $ = (sel) => document.querySelector(sel);
@@ -109,8 +114,9 @@ function buildPool(scope) {
   return pool;
 }
 
-function startQuiz(mode, scope, count) {
-  const pool = shuffle(buildPool(scope));
+function startQuiz(mode, scope, count, explicitPool) {
+  clearQuizTimer();
+  const pool = shuffle(explicitPool ? explicitPool : buildPool(scope));
   if (pool.length === 0) { alert("当前范围没有可学习的单词，换个范围试试～"); return; }
   const n = Math.min(count, pool.length);
   if (n < 1) { alert("题目数量不正确，请重新选择。"); return; }
@@ -271,12 +277,19 @@ function answerFeedback(w, ok, chosen) {
     if (SETTINGS.autoAddWrong) addToWordbook(w, true);
   }
   const nextBtn = $("#quizNext");
-  nextBtn.textContent = q.idx + 1 >= q.pool.length ? "查看结果 🎉" : "下一题 →";
-  nextBtn.classList.remove("hidden");
-  nextBtn.onclick = () => (q.idx + 1 >= q.pool.length ? finishQuiz() : nextQuestion());
   if (q.mode === "card") {
-    // 卡片模式自动进入下一题
-    setTimeout(() => (q.idx + 1 >= q.pool.length ? finishQuiz() : nextQuestion()), 900);
+    // 卡片模式：不显示「下一题」按钮，答完自动进入下一题
+    nextBtn.classList.add("hidden");
+    clearQuizTimer();
+    quizTimer = setTimeout(() => {
+      quizTimer = null;
+      if (!QUIZ_ACTIVE) return;
+      advance();
+    }, 900);
+  } else {
+    nextBtn.textContent = q.idx + 1 >= q.pool.length ? "查看结果 🎉" : "下一题 →";
+    nextBtn.classList.remove("hidden");
+    nextBtn.onclick = advance;
   }
 }
 
@@ -285,8 +298,14 @@ function nextQuestion() {
   renderQuestion();
 }
 
+function advance() {
+  if (q.idx + 1 >= q.pool.length) finishQuiz();
+  else nextQuestion();
+}
+
 function finishQuiz() {
   QUIZ_ACTIVE = false;
+  clearQuizTimer();
   $("#studyQuiz").classList.add("hidden");
   const s = $("#studySummary");
   s.classList.remove("hidden");
@@ -298,15 +317,20 @@ function finishQuiz() {
     <div class="summary-stat"><div class="num" style="color:var(--bad)">${total - q.correct}</div><div class="lbl">答错</div></div>
     <div class="summary-stat"><div class="num">${acc}%</div><div class="lbl">正确率</div></div>`;
   const box = $("#summaryWrong");
+  const auto = !!SETTINGS.autoAddWrong;
   if (q.wrongList.length) {
-    box.innerHTML = `<h4>❌ 错词（${q.wrongList.length} 个，已自动加入单词本）：</h4>` +
-      q.wrongList.map((w) => `<span class="chip">${esc(w.word)}<button title="移除" data-rm="${esc(w.word)}">✕</button></span>`).join("");
-    box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.rm); b.parentElement.remove(); }));
+    const chips = q.wrongList.map((w) => auto
+      ? `<span class="chip">${esc(w.word)}<button title="移除" data-rm="${esc(w.word.toLowerCase())}">✕</button></span>`
+      : `<span class="chip">${esc(w.word)}</span>`).join("");
+    box.innerHTML = `<h4>❌ 错词（${q.wrongList.length} 个${auto ? "，已自动加入单词本" : ""}）：</h4>` + chips;
+    if (auto) {
+      box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.rm); b.parentElement.remove(); }));
+    }
   } else {
     box.innerHTML = "";
   }
   const mode = q.mode;
-  $("#summaryRetry").onclick = () => { if (q.wrongList.length) startQuiz(mode, "wordbook", q.wrongList.length); else alert("没有错词啦～"); };
+  $("#summaryRetry").onclick = () => { if (q.wrongList.length) startQuiz(mode, "wordbook", q.wrongList.length, q.wrongList.slice()); else alert("没有错词啦～"); };
   $("#summaryAgain").onclick = () => backToSetup();
   $("#summaryHome").onclick = () => backToSetup();
   updateGoal();
@@ -314,6 +338,7 @@ function finishQuiz() {
 
 function backToSetup() {
   QUIZ_ACTIVE = false;
+  clearQuizTimer();
   $("#studyQuiz").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
   $("#studySetup").classList.remove("hidden");
@@ -330,7 +355,8 @@ function addToWordbook(entry, auto) {
   return true;
 }
 function removeFromWordbook(word) {
-  WB = WB.filter((x) => x.word !== word);
+  const key = String(word).toLowerCase();
+  WB = WB.filter((x) => x.word !== key);
   persist();
 }
 function setWbStatus(word, status) {
@@ -466,6 +492,16 @@ function persist() {
   save(LS.settings, SETTINGS);
 }
 
+/* ---------- 题目数量 ---------- */
+function resolveQuizCount() {
+  const sel = $("#quizCount").value;
+  if (sel === "custom") {
+    const v = Math.floor(Number($("#quizCountCustom").value));
+    return (v && v >= 1) ? v : null;
+  }
+  return Number(sel);
+}
+
 /* ---------- 事件绑定 ---------- */
 function bindEvents() {
   $$(".tab").forEach((t) => (t.onclick = () => showView(t.dataset.view)));
@@ -477,7 +513,16 @@ function bindEvents() {
     $$(".mode-card").forEach((x) => x.classList.toggle("selected", x === c));
   }));
   $$(".mode-card")[0].classList.add("selected");
-  $("#startQuiz").onclick = () => startQuiz(chosenMode, $("#quizScope").value, Number($("#quizCount").value));
+  $("#quizCount").onchange = () => {
+    const isCustom = $("#quizCount").value === "custom";
+    $("#quizCountCustom").classList.toggle("hidden", !isCustom);
+    if (isCustom) $("#quizCountCustom").focus();
+  };
+  $("#startQuiz").onclick = () => {
+    const count = resolveQuizCount();
+    if (count == null) { alert("请输入有效的自定义题目数量（至少 1 题）。"); return; }
+    startQuiz(chosenMode, $("#quizScope").value, count);
+  };
   $("#quizQuit").onclick = () => { if (confirm("确定结束本组学习？")) backToSetup(); };
 
   // 单词本
@@ -510,10 +555,11 @@ function bindEvents() {
   document.addEventListener("keydown", (e) => {
     if (!QUIZ_ACTIVE || $("#studyQuiz").classList.contains("hidden")) return;
     if (q.mode === "card") return;
+    const typingInSpell = q.mode === "spell" && e.target && e.target.id === "spellInput";
     if (!q.answered && /^[1-4]$/.test(e.key)) {
       const i = Number(e.key) - 1;
       if (i < q.options.length) answer(i);
-    } else if (q.answered && (e.key === "Enter" || e.key === " ") && q.mode !== "spell") {
+    } else if (q.answered && (e.key === "Enter" || e.key === " ") && !typingInSpell) {
       e.preventDefault();
       const nb = $("#quizNext");
       if (!nb.classList.contains("hidden")) nb.click();

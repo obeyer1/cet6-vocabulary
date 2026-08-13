@@ -92,6 +92,7 @@ select, input[type="text"], input[type="number"], input[type="search"], textarea
 select:focus, input:focus, textarea:focus { border-color: var(--primary); background: #fff; }
 textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+#quizCountCustom { margin-top: 8px; }
 
 /* ============ 学习 ============ */
 .mode-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }

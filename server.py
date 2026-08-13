@@ -5,6 +5,7 @@
 零第三方依赖，仅使用 Python 标准库。启动后在浏览器访问 http://127.0.0.1:8765
 """
 import argparse
+import os
 import sys
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 DATA = ROOT / "data"
+
+
+class Server(ThreadingHTTPServer):
+    """允许端口快速复用，避免 Ctrl+C 后立即重启报 Address already in use。"""
+    allow_reuse_address = True
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -26,7 +32,8 @@ class Handler(SimpleHTTPRequestHandler):
         if path.startswith("/data/"):
             rel = path[len("/data/"):]
             target = (DATA / rel).resolve()
-            if str(target).startswith(str(DATA)):
+            root = str(DATA)
+            if str(target) == root or str(target).startswith(root + os.sep):
                 return str(target)
         return super().translate_path(path)
 
@@ -42,7 +49,7 @@ class Handler(SimpleHTTPRequestHandler):
 def pick_port(start):
     for port in range(start, start + 100):
         try:
-            httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            httpd = Server(("127.0.0.1", port), Handler)
             return httpd, port
         except OSError:
             continue
