@@ -38,8 +38,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
     def end_headers(self):
-        if self.path.startswith("/data/") or self.path.endswith(".json"):
-            self.send_header("Cache-Control", "no-store")
+        # 页面与脚本必须同步更新，避免旧脚本跳过新增的预习流程。
+        self.send_header("Cache-Control", "no-store, max-age=0")
         super().end_headers()
 
     def log_message(self, fmt, *args):

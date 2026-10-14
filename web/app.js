@@ -255,14 +255,44 @@ function startQuiz(mode, scope, count, explicitPool) {
     notify(scope === "due" ? "今天暂时没有到期单词，可以先学习一些新词～" : "当前范围没有可学习的单词，换个范围试试～", "error");
     return;
   }
-  const n = Math.min(count, pool.length);
-  if (n < 1) { notify("题目数量不正确，请重新选择。", "error"); return; }
+  const n = Math.min(Math.floor(count), pool.length);
+  if (!Number.isFinite(n) || n < 1) { notify("题目数量不正确，请重新选择。", "error"); return; }
   Object.assign(q, { mode, pool: pool.slice(0, n), idx: 0, correct: 0, wrongList: [], options: [], answered: false });
-  QUIZ_ACTIVE = true;
+  Object.assign(q, { words: q.pool.slice(), choiceMode: mode === "zh2en" ? "zh2en" : "en2zh", stage: 0, retryRound: 0, retryWords: [], attempts: 0 });
+  QUIZ_ACTIVE = false;
+  showView("study");
   $("#studySetup").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
+  $("#studyQuiz").classList.add("hidden");
+  $("#studyPreview").classList.remove("hidden");
+  $("#previewCount").textContent = `本轮 ${n} 个单词`;
+  $("#previewList").innerHTML = q.pool.map((w, index) => `
+    <div class="preview-word">
+      <span class="preview-number">${String(index + 1).padStart(2, "0")}</span>
+      <div class="item-main"><div class="item-word">${esc(w.word)}</div>
+        <div class="preview-phonetic">${esc(w.phonetic || "")}</div>
+        <div class="preview-meaning">${esc(w.meaning)}</div></div>
+      <button type="button" class="mini-btn" data-preview-speak="${index}" aria-label="朗读 ${esc(w.word)}">🔊</button>
+    </div>`).join("");
+  $("#previewList").querySelectorAll("[data-preview-speak]").forEach((button) => {
+    button.onclick = () => speakWord(q.pool[Number(button.dataset.previewSpeak)].word);
+  });
+  $("#previewTitle").focus();
+  window.scrollTo({ top: 0 });
+}
+
+function beginTest() {
+  if (QUIZ_ACTIVE || !q.pool.length || $("#studyPreview").classList.contains("hidden")) return;
+  // 只打乱已预习单词的顺序，不重新抽词。
+  q.pool = shuffle(q.words);
+  q.mode = q.choiceMode;
+  QUIZ_ACTIVE = true;
+  $("#studyPreview").classList.add("hidden");
   $("#studyQuiz").classList.remove("hidden");
   renderQuestion();
+  $("#quizWord").setAttribute("tabindex", "-1");
+  if (q.mode !== "spell") $("#quizWord").focus();
+  window.scrollTo({ top: 0 });
 }
 
 function renderQuestion() {
@@ -274,6 +304,7 @@ function renderQuestion() {
   $("#quizFeedback").className = "feedback hidden";
   $("#quizMeaning").classList.add("hidden");
   $("#quizProgressText").textContent = `第 ${q.idx + 1} / ${q.pool.length} 题`;
+  $("#quizStage").textContent = `${q.stage === 0 ? "第 1 阶段 · 选择" : "第 2 阶段 · 拼写"}${q.retryRound ? ` · 错词补测 ${q.retryRound}` : " · 全组测试"}`;
   $("#quizProgressBar").style.width = `${((q.idx + 1) / q.pool.length) * 100}%`;
   $("#quizProgress").setAttribute("aria-valuemax", String(q.pool.length));
   $("#quizProgress").setAttribute("aria-valuenow", String(q.idx + 1));
@@ -437,6 +468,8 @@ function answerCard(ok) {
 }
 
 function answerFeedback(w, ok, chosen) {
+  q.attempts++;
+  if (!ok) q.retryWords.push(w);
   if (!ok && SETTINGS.autoAddWrong) addToWordbook(w);
   recordAnswer(wordKey(w.word), ok);
   const fb = $("#quizFeedback");
@@ -452,7 +485,7 @@ function answerFeedback(w, ok, chosen) {
       });
     }
   } else {
-    q.wrongList.push(w);
+    if (!q.wrongList.some((entry) => wordKey(entry.word) === wordKey(w.word))) q.wrongList.push(w);
     fb.className = "feedback no";
     const typedNote = q.mode === "spell" && chosen ? ` 你输入的是「${esc(chosen)}」<br>` : "";
     fb.innerHTML = `❌ 答错了。正确答案是 <span class="fb-word">${esc(w.word)}</span> ${esc(w.phonetic)}<button class="speak-btn" type="button" data-speak="${esc(w.word)}" aria-label="朗读 ${esc(w.word)}">🔊</button><br>${typedNote}${esc(w.meaning)}`;
@@ -472,7 +505,7 @@ function answerFeedback(w, ok, chosen) {
     nextBtn.classList.add("hidden");
     scheduleCardAdvance();
   } else {
-    nextBtn.textContent = q.idx + 1 >= q.pool.length ? "查看结果 🎉" : "下一题 →";
+    nextBtn.textContent = q.idx + 1 < q.pool.length ? "下一题 →" : q.retryWords.length ? "继续补测错词 →" : q.stage === 0 ? "进入拼写测试 →" : "查看结果 🎉";
     nextBtn.classList.remove("hidden");
     nextBtn.onclick = advance;
   }
@@ -493,8 +526,20 @@ function nextQuestion() {
 }
 
 function advance() {
-  if (q.idx + 1 >= q.pool.length) finishQuiz();
-  else nextQuestion();
+  if (!QUIZ_ACTIVE || !q.answered) return;
+  if (q.idx + 1 < q.pool.length) { nextQuestion(); return; }
+  if (q.retryWords.length) {
+    q.pool = shuffle(q.retryWords);
+    q.retryWords = [];
+    q.retryRound++;
+  } else if (q.stage === 0) {
+    q.stage = 1;
+    q.mode = "spell";
+    q.pool = shuffle(q.words);
+    q.retryRound = 0;
+  } else { finishQuiz(); return; }
+  q.idx = 0;
+  renderQuestion();
 }
 
 function finishQuiz() {
@@ -503,27 +548,27 @@ function finishQuiz() {
   $("#studyQuiz").classList.add("hidden");
   const s = $("#studySummary");
   s.classList.remove("hidden");
-  const total = q.pool.length;
+  const total = q.attempts;
   const acc = Math.round((q.correct / total) * 100);
-  $("#summaryTitle").textContent = acc >= 90 ? "🎉 太棒了！" : acc >= 60 ? "👍 继续加油！" : "💪 再练练吧";
+  $("#summaryTitle").textContent = `🎉 ${q.words.length} 个单词，两轮全部通过！`;
   $("#summaryStats").innerHTML = `
     <div class="summary-stat"><div class="num" style="color:var(--good)">${q.correct}</div><div class="lbl">答对</div></div>
     <div class="summary-stat"><div class="num" style="color:var(--bad)">${total - q.correct}</div><div class="lbl">答错</div></div>
-    <div class="summary-stat"><div class="num">${acc}%</div><div class="lbl">正确率</div></div>`;
+    <div class="summary-stat"><div class="num">${acc}%</div><div class="lbl">累计正确率（含补测）</div></div>`;
   const box = $("#summaryWrong");
   const auto = !!SETTINGS.autoAddWrong;
   if (q.wrongList.length) {
     const chips = q.wrongList.map((w) => auto
       ? `<span class="chip">${esc(w.word)}<button title="移除" data-rm="${esc(w.word.toLowerCase())}">✕</button></span>`
       : `<span class="chip">${esc(w.word)}</span>`).join("");
-    box.innerHTML = `<h4>❌ 错词（${q.wrongList.length} 个${auto ? "，已自动加入单词本" : ""}）：</h4>` + chips;
+    box.innerHTML = `<h4>本次曾答错 ${q.wrongList.length} 个，现已补测通过${auto ? "（已加入单词本）" : ""}：</h4>` + chips;
     if (auto) {
       box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.rm); b.parentElement.remove(); }));
     }
   } else {
     box.innerHTML = "";
   }
-  const mode = q.mode;
+  const mode = q.choiceMode;
   $("#summaryRetry").onclick = () => { if (q.wrongList.length) startQuiz(mode, "wordbook", q.wrongList.length, q.wrongList.slice()); else notify("没有错词啦～"); };
   $("#summaryAgain").onclick = () => backToSetup();
   $("#summaryHome").onclick = () => backToSetup();
@@ -533,6 +578,7 @@ function finishQuiz() {
 function backToSetup() {
   QUIZ_ACTIVE = false;
   clearQuizTimer();
+  $("#studyPreview").classList.add("hidden");
   $("#studyQuiz").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
   $("#studySetup").classList.remove("hidden");
@@ -752,6 +798,8 @@ function bindEvents() {
     startQuiz(chosenMode, $("#quizScope").value, count);
   };
   $("#quizQuit").onclick = () => { if (confirm("确定结束本组学习？")) backToSetup(); };
+  $("#previewStartTest").onclick = beginTest;
+  $("#previewBack").onclick = backToSetup;
 
   // 单词本
   $("#wbSearch").oninput = renderWordbook;
