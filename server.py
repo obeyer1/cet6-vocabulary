@@ -38,8 +38,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
     def end_headers(self):
-        if self.path.startswith("/data/") or self.path.endswith(".json"):
-            self.send_header("Cache-Control", "no-store")
+        # 页面与脚本必须同步更新，避免旧脚本跳过新增的预习流程。
+        self.send_header("Cache-Control", "no-store, max-age=0")
         super().end_headers()
 
     def log_message(self, fmt, *args):
@@ -47,7 +47,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def pick_port(start):
-    for port in range(start, start + 100):
+    for port in range(start, min(start + 100, 65536)):
         try:
             httpd = Server(("127.0.0.1", port), Handler)
             return httpd, port
@@ -61,6 +61,8 @@ def main():
     ap.add_argument("--port", type=int, default=8765, help="端口号（默认 8765，占用时自动顺延）")
     ap.add_argument("--open", action="store_true", help="启动后自动打开浏览器")
     args = ap.parse_args()
+    if not 1 <= args.port <= 65535:
+        ap.error("端口号必须在 1 到 65535 之间")
 
     httpd, port = pick_port(args.port)
     if httpd is None:
@@ -80,6 +82,7 @@ def main():
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n服务已停止。")
+    finally:
         httpd.server_close()
 
 

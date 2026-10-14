@@ -11,6 +11,9 @@ const LS = {
   stats: "cet6_stats",
   settings: "cet6_settings",
 };
+const DATA_VERSION = 2;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60];
 
 const load = (k, def) => {
   try {
@@ -33,6 +36,8 @@ let SETTINGS = null;       // { dailyGoal, autoAddWrong }
 const q = { mode: null, pool: [], idx: 0, correct: 0, wrongList: [], options: [], answered: false };
 let QUIZ_ACTIVE = false;
 let quizTimer = null;      // 卡片模式自动跳题定时器
+let toastTimer = null;
+let editingWordKey = null;
 
 function clearQuizTimer() {
   if (quizTimer) { clearTimeout(quizTimer); quizTimer = null; }
@@ -44,7 +49,101 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-const sample = (arr, n) => shuffle(arr).slice(0, n);
+const finiteNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const nonNegativeInt = (value) => Math.max(0, Math.floor(finiteNumber(value)));
+const wordKey = (word) => String(word || "").trim().toLowerCase();
+
+function notify(message, type = "info") {
+  const toast = $("#toast");
+  if (!toast) return;
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.className = `toast${type === "error" ? " error" : ""}`;
+  toastTimer = setTimeout(() => toast.classList.add("hidden"), 2800);
+}
+
+function normalizeEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const word = String(entry.word || "").trim();
+  const meaning = String(entry.meaning || "").trim();
+  if (!/^[A-Za-z][A-Za-z'\- ]*$/.test(word) || !meaning) return null;
+  return { word, phonetic: String(entry.phonetic || "").trim(), meaning };
+}
+
+function normalizeWordbook(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const word = wordKey(item.word);
+    if (!word || seen.has(word)) return [];
+    seen.add(word);
+    return [{
+      word,
+      addedAt: nonNegativeInt(item.addedAt) || Date.now(),
+      status: item.status === "mastered" ? "mastered" : "learning",
+      wrong: nonNegativeInt(item.wrong),
+      right: nonNegativeInt(item.right),
+      lastAt: nonNegativeInt(item.lastAt) || Date.now(),
+    }];
+  });
+}
+
+function normalizeWordStats(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result = {};
+  for (const [rawWord, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== "object") continue;
+    const word = wordKey(rawWord);
+    if (!word) continue;
+    result[word] = {
+      seen: nonNegativeInt(raw.seen),
+      right: nonNegativeInt(raw.right),
+      wrong: nonNegativeInt(raw.wrong),
+      streak: nonNegativeInt(raw.streak),
+      interval: nonNegativeInt(raw.interval),
+      nextReviewAt: nonNegativeInt(raw.nextReviewAt),
+      lastAt: nonNegativeInt(raw.lastAt),
+    };
+  }
+  return result;
+}
+
+function normalizeStats(value) {
+  const result = { total: { seen: 0, right: 0, wrong: 0 }, daily: {} };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return result;
+  const total = value.total && typeof value.total === "object" ? value.total : {};
+  result.total = { seen: nonNegativeInt(total.seen), right: nonNegativeInt(total.right), wrong: nonNegativeInt(total.wrong) };
+  if (value.daily && typeof value.daily === "object" && !Array.isArray(value.daily)) {
+    for (const [date, raw] of Object.entries(value.daily)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw || typeof raw !== "object") continue;
+      result.daily[date] = { seen: nonNegativeInt(raw.seen), right: nonNegativeInt(raw.right), wrong: nonNegativeInt(raw.wrong) };
+    }
+  }
+  return result;
+}
+
+function normalizeSettings(value) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    dailyGoal: Math.max(5, Math.min(500, nonNegativeInt(raw.dailyGoal) || 20)),
+    autoAddWrong: raw.autoAddWrong !== false,
+  };
+}
+
+function rebuildWords() {
+  const builtinKeys = new Set(BUILTIN.map((entry) => wordKey(entry.word)));
+  const seen = new Set();
+  CUSTOM = CUSTOM.flatMap((raw) => {
+    const entry = normalizeEntry(raw);
+    const key = entry && wordKey(entry.word);
+    if (!entry || builtinKeys.has(key) || seen.has(key)) return [];
+    seen.add(key);
+    return [entry];
+  });
+  WORDS = BUILTIN.concat(CUSTOM);
+  BYWORD = new Map(WORDS.map((entry) => [wordKey(entry.word), entry]));
+}
 
 function todayStats() {
   const key = todayStr();
@@ -52,23 +151,36 @@ function todayStats() {
   return STATS.daily[key];
 }
 function recordAnswer(word, ok) {
-  const ws = WSTATS[word] || (WSTATS[word] = { seen: 0, right: 0, wrong: 0 });
+  word = wordKey(word);
+  const ws = WSTATS[word] || (WSTATS[word] = { seen: 0, right: 0, wrong: 0, streak: 0, interval: 0, nextReviewAt: 0, lastAt: 0 });
   ws.seen++; ok ? ws.right++ : ws.wrong++;
+  ws.lastAt = Date.now();
+  if (ok) {
+    ws.streak = nonNegativeInt(ws.streak) + 1;
+    ws.interval = REVIEW_INTERVALS[Math.min(ws.streak - 1, REVIEW_INTERVALS.length - 1)];
+    ws.nextReviewAt = ws.lastAt + ws.interval * DAY_MS;
+  } else {
+    ws.streak = 0;
+    ws.interval = 0;
+    ws.nextReviewAt = ws.lastAt + 10 * 60 * 1000;
+  }
   STATS.total.seen++; ok ? STATS.total.right++ : STATS.total.wrong++;
   const t = todayStats(); t.seen++; ok ? t.right++ : t.wrong++;
   const wb = WB.find((x) => x.word === word);
   if (wb) { wb.right += ok ? 1 : 0; wb.wrong += ok ? 0 : 1; wb.lastAt = Date.now(); }
-  persist();
+  save(LS.wordbook, WB);
+  save(LS.wordstats, WSTATS);
+  save(LS.stats, STATS);
   updateGoal();
 }
 
 /* ---------- 初始化 ---------- */
 async function init() {
-  CUSTOM = load(LS.custom, []);
-  WB = load(LS.wordbook, []);
-  WSTATS = load(LS.wordstats, {});
-  STATS = load(LS.stats, { total: { seen: 0, right: 0, wrong: 0 }, daily: {} });
-  SETTINGS = load(LS.settings, { dailyGoal: 20, autoAddWrong: true });
+  const storedCustom = load(LS.custom, []);
+  WB = normalizeWordbook(load(LS.wordbook, []));
+  WSTATS = normalizeWordStats(load(LS.wordstats, {}));
+  STATS = normalizeStats(load(LS.stats, null));
+  SETTINGS = normalizeSettings(load(LS.settings, null));
 
   let builtin = [];
   try {
@@ -79,32 +191,53 @@ async function init() {
     showFatal("无法加载词库。请通过「启动背单词.command」启动本应用（而不是直接双击 index.html）。");
     return;
   }
-  BUILTIN = builtin;
-  WORDS = BUILTIN.concat(CUSTOM);
-  BYWORD = new Map(WORDS.map((w) => [w.word.toLowerCase(), w]));
+  BUILTIN = Array.isArray(builtin) ? builtin.map(normalizeEntry).filter(Boolean) : [];
+  if (!BUILTIN.length) { showFatal("词库内容为空或格式不正确。"); return; }
+  CUSTOM = Array.isArray(storedCustom) ? storedCustom : [];
+  rebuildWords();
+  persist();
   bindEvents();
   renderGoal();
   showView("study");
 }
 
 function showFatal(msg) {
-  document.body.innerHTML = `<div style="max-width:560px;margin:80px auto;padding:24px;background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.1);font-family:-apple-system,sans-serif">
-    <h2 style="margin-top:0">⚠️ ${esc(msg)}</h2></div>`;
+  document.body.innerHTML = `<div class="fatal-state"><span>!</span><h2>暂时无法启动</h2><p>${esc(msg)}</p></div>`;
 }
 
 /* ---------- 导航 ---------- */
 function showView(name) {
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
+  const previous = $(".tab.active")?.dataset.view;
+  if (name !== "study") clearQuizTimer();
+  $$(".tab").forEach((t) => {
+    const active = t.dataset.view === name;
+    t.classList.toggle("active", active);
+    t.setAttribute("aria-current", active ? "page" : "false");
+  });
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
   if (name === "wordbook") renderWordbook();
   if (name === "glossary") renderGlossary();
   if (name === "stats") renderStats();
   if (name === "settings") renderSettings();
+  if (name === "study" && QUIZ_ACTIVE && q.mode === "card" && q.answered) scheduleCardAdvance();
+  if (previous && previous !== name) window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 /* ---------- 学习 ---------- */
 function buildPool(scope) {
   let pool = WORDS.slice();
+  if (scope === "due") {
+    const now = Date.now();
+    pool = pool.filter((w) => {
+      const stats = WSTATS[wordKey(w.word)];
+      return stats && stats.seen > 0 && (!stats.nextReviewAt || stats.nextReviewAt <= now);
+    });
+    pool.sort((a, b) => {
+      const sa = WSTATS[wordKey(a.word)];
+      const sb = WSTATS[wordKey(b.word)];
+      return (sb.wrong - sb.right) - (sa.wrong - sa.right) || sa.nextReviewAt - sb.nextReviewAt;
+    });
+  }
   if (scope === "new") pool = pool.filter((w) => !WSTATS[w.word.toLowerCase()] || WSTATS[w.word.toLowerCase()].seen === 0);
   if (scope === "wrong") pool = pool.filter((w) => { const s = WSTATS[w.word.toLowerCase()]; return s && s.wrong > 0; });
   if (scope === "wordbook") {
@@ -116,16 +249,50 @@ function buildPool(scope) {
 
 function startQuiz(mode, scope, count, explicitPool) {
   clearQuizTimer();
-  const pool = shuffle(explicitPool ? explicitPool : buildPool(scope));
-  if (pool.length === 0) { alert("当前范围没有可学习的单词，换个范围试试～"); return; }
-  const n = Math.min(count, pool.length);
-  if (n < 1) { alert("题目数量不正确，请重新选择。"); return; }
+  const source = explicitPool ? explicitPool.slice() : buildPool(scope);
+  const pool = scope === "due" && !explicitPool ? source : shuffle(source);
+  if (pool.length === 0) {
+    notify(scope === "due" ? "今天暂时没有到期单词，可以先学习一些新词～" : "当前范围没有可学习的单词，换个范围试试～", "error");
+    return;
+  }
+  const n = Math.min(Math.floor(count), pool.length);
+  if (!Number.isFinite(n) || n < 1) { notify("题目数量不正确，请重新选择。", "error"); return; }
   Object.assign(q, { mode, pool: pool.slice(0, n), idx: 0, correct: 0, wrongList: [], options: [], answered: false });
-  QUIZ_ACTIVE = true;
+  Object.assign(q, { words: q.pool.slice(), choiceMode: mode === "zh2en" ? "zh2en" : "en2zh", stage: 0, retryRound: 0, retryWords: [], attempts: 0 });
+  QUIZ_ACTIVE = false;
+  showView("study");
   $("#studySetup").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
+  $("#studyQuiz").classList.add("hidden");
+  $("#studyPreview").classList.remove("hidden");
+  $("#previewCount").textContent = `本轮 ${n} 个单词`;
+  $("#previewList").innerHTML = q.pool.map((w, index) => `
+    <div class="preview-word">
+      <span class="preview-number">${String(index + 1).padStart(2, "0")}</span>
+      <div class="item-main"><div class="item-word">${esc(w.word)}</div>
+        <div class="preview-phonetic">${esc(w.phonetic || "")}</div>
+        <div class="preview-meaning">${esc(w.meaning)}</div></div>
+      <button type="button" class="mini-btn" data-preview-speak="${index}" aria-label="朗读 ${esc(w.word)}">🔊</button>
+    </div>`).join("");
+  $("#previewList").querySelectorAll("[data-preview-speak]").forEach((button) => {
+    button.onclick = () => speakWord(q.pool[Number(button.dataset.previewSpeak)].word);
+  });
+  $("#previewTitle").focus();
+  window.scrollTo({ top: 0 });
+}
+
+function beginTest() {
+  if (QUIZ_ACTIVE || !q.pool.length || $("#studyPreview").classList.contains("hidden")) return;
+  // 只打乱已预习单词的顺序，不重新抽词。
+  q.pool = shuffle(q.words);
+  q.mode = q.choiceMode;
+  QUIZ_ACTIVE = true;
+  $("#studyPreview").classList.add("hidden");
   $("#studyQuiz").classList.remove("hidden");
   renderQuestion();
+  $("#quizWord").setAttribute("tabindex", "-1");
+  if (q.mode !== "spell") $("#quizWord").focus();
+  window.scrollTo({ top: 0 });
 }
 
 function renderQuestion() {
@@ -137,10 +304,21 @@ function renderQuestion() {
   $("#quizFeedback").className = "feedback hidden";
   $("#quizMeaning").classList.add("hidden");
   $("#quizProgressText").textContent = `第 ${q.idx + 1} / ${q.pool.length} 题`;
-  $("#quizProgressBar").style.width = `${(q.idx / q.pool.length) * 100}%`;
+  $("#quizStage").textContent = `${q.stage === 0 ? "第 1 阶段 · 选择" : "第 2 阶段 · 拼写"}${q.retryRound ? ` · 错词补测 ${q.retryRound}` : " · 全组测试"}`;
+  $("#quizProgressBar").style.width = `${((q.idx + 1) / q.pool.length) * 100}%`;
+  $("#quizProgress").setAttribute("aria-valuemax", String(q.pool.length));
+  $("#quizProgress").setAttribute("aria-valuenow", String(q.idx + 1));
 
   const card = $("#quizCard");
   card.classList.remove("revealed");
+  card.onclick = null;
+  card.onkeydown = null;
+  card.removeAttribute("role");
+  card.removeAttribute("aria-label");
+  card.tabIndex = -1;
+  const speak = $("#quizSpeak");
+  speak.classList.add("hidden");
+  speak.onclick = null;
 
   if (q.mode === "spell") {
     $("#quizWord").textContent = w.meaning;
@@ -168,7 +346,16 @@ function renderQuestion() {
     $("#quizWord").textContent = w.word;
     $("#quizPhonetic").textContent = w.phonetic;
     $("#quizMeaning").textContent = w.meaning;
-    card.onclick = () => { $("#quizMeaning").classList.remove("hidden"); card.classList.add("revealed"); };
+    const reveal = () => { $("#quizMeaning").classList.remove("hidden"); card.classList.add("revealed"); };
+    card.onclick = reveal;
+    card.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); reveal(); }
+    };
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", "翻开卡片查看释义");
+    speak.classList.remove("hidden");
+    speak.onclick = (event) => { event.stopPropagation(); speakWord(w.word); };
     const opts = $("#quizOptions");
     opts.innerHTML = `
       <div class="options" style="grid-template-columns:1fr 1fr;margin-top:0">
@@ -184,6 +371,8 @@ function renderQuestion() {
     $("#quizWord").textContent = w.word;
     $("#quizPhonetic").textContent = w.phonetic;
     q.options = buildOptions(w, "meaning");
+    speak.classList.remove("hidden");
+    speak.onclick = () => speakWord(w.word);
   } else {
     $("#quizWord").textContent = w.meaning;
     $("#quizPhonetic").textContent = "";
@@ -193,17 +382,49 @@ function renderQuestion() {
 }
 
 function buildOptions(correctEntry, type) {
-  const others = WORDS.filter((w) => w.word.toLowerCase() !== correctEntry.word.toLowerCase());
-  const distract = sample(others, 3);
   const opts = [correctEntry];
-  for (const d of distract) {
-    if (type === "meaning") {
-      if (!opts.some((o) => o.meaning === d.meaning)) opts.push(d);
-    } else {
-      if (!opts.some((o) => o.word === d.word)) opts.push(d);
-    }
+  const targetPos = partOfSpeech(correctEntry.meaning);
+  const targetWord = wordKey(correctEntry.word);
+  const candidates = WORDS
+    .filter((entry) => wordKey(entry.word) !== targetWord)
+    .map((entry) => {
+      const candidateWord = wordKey(entry.word);
+      let score = Math.max(0, 5 - Math.abs(candidateWord.length - targetWord.length));
+      if (targetPos && partOfSpeech(entry.meaning) === targetPos) score += 6;
+      if (candidateWord[0] === targetWord[0]) score += 2;
+      score += commonPrefixLength(candidateWord, targetWord);
+      return { entry, score: score + Math.random() * 2 };
+    })
+    .sort((a, b) => b.score - a.score);
+  for (const { entry } of candidates) {
+    const value = type === "meaning" ? entry.meaning.trim().toLowerCase() : wordKey(entry.word);
+    if (!opts.some((item) => (type === "meaning" ? item.meaning.trim().toLowerCase() : wordKey(item.word)) === value)) opts.push(entry);
+    if (opts.length === 4) break;
   }
   return shuffle(opts);
+}
+
+function partOfSpeech(meaning) {
+  const match = String(meaning || "").trim().match(/^(n|v|vt|vi|adj|adv|prep|conj|pron|num|int)\./i);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function commonPrefixLength(a, b) {
+  let length = 0;
+  while (length < a.length && length < b.length && a[length] === b[length]) length++;
+  return length;
+}
+
+function speakWord(word) {
+  if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+    notify("当前浏览器不支持语音朗读。", "error");
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(String(word));
+  utterance.lang = "en-US";
+  utterance.rate = 0.85;
+  window.speechSynthesis.speak(utterance);
 }
 
 function renderOptions() {
@@ -220,7 +441,7 @@ function answer(i) {
   q.answered = true;
   const w = q.pool[q.idx];
   const chosen = q.options[i];
-  const ok = chosen.word.toLowerCase() === w.word.toLowerCase();
+  const ok = wordKey(chosen.word) === wordKey(w.word);
   answerFeedback(w, ok, chosen);
 }
 
@@ -247,50 +468,56 @@ function answerCard(ok) {
 }
 
 function answerFeedback(w, ok, chosen) {
-  recordAnswer(w.word.toLowerCase(), ok);
+  q.attempts++;
+  if (!ok) q.retryWords.push(w);
+  if (!ok && SETTINGS.autoAddWrong) addToWordbook(w);
+  recordAnswer(wordKey(w.word), ok);
   const fb = $("#quizFeedback");
-  const isEn2Zh = q.mode === "en2zh";
   if (ok) {
     q.correct++;
     fb.className = "feedback ok";
-    fb.innerHTML = `✅ 回答正确！<span class="fb-word">${esc(w.word)}</span> ${esc(w.phonetic)}<br>${esc(w.meaning)}`;
+    fb.innerHTML = `✅ 回答正确！<span class="fb-word">${esc(w.word)}</span> ${esc(w.phonetic)}<button class="speak-btn" type="button" data-speak="${esc(w.word)}" aria-label="朗读 ${esc(w.word)}">🔊</button><br>${esc(w.meaning)}`;
     if (q.mode !== "card" && q.mode !== "spell") {
       const btns = $$("#quizOptions .option");
       btns.forEach((b, idx) => {
-        if (q.options[idx].word.toLowerCase() === w.word.toLowerCase()) b.classList.add("correct");
+        if (wordKey(q.options[idx].word) === wordKey(w.word)) b.classList.add("correct");
         b.disabled = true;
       });
     }
   } else {
-    q.wrongList.push(w);
+    if (!q.wrongList.some((entry) => wordKey(entry.word) === wordKey(w.word))) q.wrongList.push(w);
     fb.className = "feedback no";
     const typedNote = q.mode === "spell" && chosen ? ` 你输入的是「${esc(chosen)}」<br>` : "";
-    fb.innerHTML = `❌ 答错了。正确答案是 <span class="fb-word">${esc(w.word)}</span> ${esc(w.phonetic)}<br>${typedNote}${esc(w.meaning)}`;
+    fb.innerHTML = `❌ 答错了。正确答案是 <span class="fb-word">${esc(w.word)}</span> ${esc(w.phonetic)}<button class="speak-btn" type="button" data-speak="${esc(w.word)}" aria-label="朗读 ${esc(w.word)}">🔊</button><br>${typedNote}${esc(w.meaning)}`;
     if (q.mode !== "card" && q.mode !== "spell") {
       const btns = $$("#quizOptions .option");
       btns.forEach((b, idx) => {
-        if (q.options[idx].word.toLowerCase() === w.word.toLowerCase()) b.classList.add("correct");
-        else if (chosen && q.options[idx].word.toLowerCase() === chosen.word.toLowerCase()) b.classList.add("wrong");
+        if (wordKey(q.options[idx].word) === wordKey(w.word)) b.classList.add("correct");
+        else if (chosen && wordKey(q.options[idx].word) === wordKey(chosen.word)) b.classList.add("wrong");
         b.disabled = true;
       });
     }
-    if (SETTINGS.autoAddWrong) addToWordbook(w, true);
   }
+  fb.querySelector("[data-speak]")?.addEventListener("click", () => speakWord(w.word));
   const nextBtn = $("#quizNext");
   if (q.mode === "card") {
     // 卡片模式：不显示「下一题」按钮，答完自动进入下一题
     nextBtn.classList.add("hidden");
-    clearQuizTimer();
-    quizTimer = setTimeout(() => {
-      quizTimer = null;
-      if (!QUIZ_ACTIVE) return;
-      advance();
-    }, 900);
+    scheduleCardAdvance();
   } else {
-    nextBtn.textContent = q.idx + 1 >= q.pool.length ? "查看结果 🎉" : "下一题 →";
+    nextBtn.textContent = q.idx + 1 < q.pool.length ? "下一题 →" : q.retryWords.length ? "继续补测错词 →" : q.stage === 0 ? "进入拼写测试 →" : "查看结果 🎉";
     nextBtn.classList.remove("hidden");
     nextBtn.onclick = advance;
   }
+}
+
+function scheduleCardAdvance() {
+  clearQuizTimer();
+  if (!QUIZ_ACTIVE || q.mode !== "card" || !q.answered || !$("#view-study").classList.contains("active")) return;
+  quizTimer = setTimeout(() => {
+    quizTimer = null;
+    if (QUIZ_ACTIVE && $("#view-study").classList.contains("active")) advance();
+  }, 900);
 }
 
 function nextQuestion() {
@@ -299,8 +526,20 @@ function nextQuestion() {
 }
 
 function advance() {
-  if (q.idx + 1 >= q.pool.length) finishQuiz();
-  else nextQuestion();
+  if (!QUIZ_ACTIVE || !q.answered) return;
+  if (q.idx + 1 < q.pool.length) { nextQuestion(); return; }
+  if (q.retryWords.length) {
+    q.pool = shuffle(q.retryWords);
+    q.retryWords = [];
+    q.retryRound++;
+  } else if (q.stage === 0) {
+    q.stage = 1;
+    q.mode = "spell";
+    q.pool = shuffle(q.words);
+    q.retryRound = 0;
+  } else { finishQuiz(); return; }
+  q.idx = 0;
+  renderQuestion();
 }
 
 function finishQuiz() {
@@ -309,28 +548,28 @@ function finishQuiz() {
   $("#studyQuiz").classList.add("hidden");
   const s = $("#studySummary");
   s.classList.remove("hidden");
-  const total = q.pool.length;
+  const total = q.attempts;
   const acc = Math.round((q.correct / total) * 100);
-  $("#summaryTitle").textContent = acc >= 90 ? "🎉 太棒了！" : acc >= 60 ? "👍 继续加油！" : "💪 再练练吧";
+  $("#summaryTitle").textContent = `🎉 ${q.words.length} 个单词，两轮全部通过！`;
   $("#summaryStats").innerHTML = `
     <div class="summary-stat"><div class="num" style="color:var(--good)">${q.correct}</div><div class="lbl">答对</div></div>
     <div class="summary-stat"><div class="num" style="color:var(--bad)">${total - q.correct}</div><div class="lbl">答错</div></div>
-    <div class="summary-stat"><div class="num">${acc}%</div><div class="lbl">正确率</div></div>`;
+    <div class="summary-stat"><div class="num">${acc}%</div><div class="lbl">累计正确率（含补测）</div></div>`;
   const box = $("#summaryWrong");
   const auto = !!SETTINGS.autoAddWrong;
   if (q.wrongList.length) {
     const chips = q.wrongList.map((w) => auto
       ? `<span class="chip">${esc(w.word)}<button title="移除" data-rm="${esc(w.word.toLowerCase())}">✕</button></span>`
       : `<span class="chip">${esc(w.word)}</span>`).join("");
-    box.innerHTML = `<h4>❌ 错词（${q.wrongList.length} 个${auto ? "，已自动加入单词本" : ""}）：</h4>` + chips;
+    box.innerHTML = `<h4>本次曾答错 ${q.wrongList.length} 个，现已补测通过${auto ? "（已加入单词本）" : ""}：</h4>` + chips;
     if (auto) {
       box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.rm); b.parentElement.remove(); }));
     }
   } else {
     box.innerHTML = "";
   }
-  const mode = q.mode;
-  $("#summaryRetry").onclick = () => { if (q.wrongList.length) startQuiz(mode, "wordbook", q.wrongList.length, q.wrongList.slice()); else alert("没有错词啦～"); };
+  const mode = q.choiceMode;
+  $("#summaryRetry").onclick = () => { if (q.wrongList.length) startQuiz(mode, "wordbook", q.wrongList.length, q.wrongList.slice()); else notify("没有错词啦～"); };
   $("#summaryAgain").onclick = () => backToSetup();
   $("#summaryHome").onclick = () => backToSetup();
   updateGoal();
@@ -339,36 +578,36 @@ function finishQuiz() {
 function backToSetup() {
   QUIZ_ACTIVE = false;
   clearQuizTimer();
+  $("#studyPreview").classList.add("hidden");
   $("#studyQuiz").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
   $("#studySetup").classList.remove("hidden");
 }
 
 /* ---------- 单词本 ---------- */
-function wbStatus(word) { const x = WB.find((e) => e.word === word); return x ? x.status : null; }
-
-function addToWordbook(entry, auto) {
-  const key = entry.word.toLowerCase();
+function addToWordbook(entry) {
+  const key = wordKey(entry.word);
   if (WB.some((x) => x.word === key)) return false;
   WB.push({ word: key, addedAt: Date.now(), status: "learning", wrong: 0, right: 0, lastAt: Date.now() });
-  persist();
+  save(LS.wordbook, WB);
   return true;
 }
 function removeFromWordbook(word) {
-  const key = String(word).toLowerCase();
+  const key = wordKey(word);
   WB = WB.filter((x) => x.word !== key);
-  persist();
+  save(LS.wordbook, WB);
 }
 function setWbStatus(word, status) {
   const x = WB.find((e) => e.word === word);
   if (x) x.status = status;
-  persist();
+  save(LS.wordbook, WB);
 }
 
 function renderWordbook() {
   $("#wbCount").textContent = `${WB.length} 个单词`;
   const kw = $("#wbSearch").value.trim().toLowerCase();
   const flt = $("#wbFilter").value;
+  const sort = $("#wbSort").value;
   let list = WB.slice();
   if (flt !== "all") list = list.filter((x) => x.status === flt);
   if (kw) {
@@ -377,6 +616,14 @@ function renderWordbook() {
       return x.word.includes(kw) || (e && (e.meaning || "").toLowerCase().includes(kw));
     });
   }
+  list.sort((a, b) => {
+    if (sort === "wrong") return b.wrong - a.wrong || b.lastAt - a.lastAt;
+    if (sort === "recent") return b.lastAt - a.lastAt;
+    if (sort === "added") return b.addedAt - a.addedAt;
+    const as = WSTATS[a.word] || {};
+    const bs = WSTATS[b.word] || {};
+    return (as.nextReviewAt || 0) - (bs.nextReviewAt || 0) || b.wrong - a.wrong;
+  });
   const box = $("#wbList");
   const empty = $("#wbEmpty");
   if (!list.length) {
@@ -392,9 +639,11 @@ function renderWordbook() {
       <div class="item-main">
         <div><span class="item-word">${esc(e.word)}</span>${e.phonetic ? `<span class="item-phonetic">${esc(e.phonetic)}</span>` : ""}</div>
         <div class="item-meaning">${esc(e.meaning)}</div>
+        <div class="muted">错 ${x.wrong} · 对 ${x.right} · ${esc(reviewLabel(WSTATS[x.word]))}</div>
       </div>
       <div class="item-actions">
         ${badge}
+        <button class="mini-btn" data-speak="${esc(e.word)}" aria-label="朗读 ${esc(e.word)}">🔊</button>
         <button class="mini-btn" data-wb-toggle="${esc(x.word)}" data-wb-cur="${x.status}">${x.status === "mastered" ? "转学习中" : "标为掌握"}</button>
         <button class="mini-btn danger" data-wb-rm="${esc(x.word)}">移除</button>
       </div>
@@ -402,6 +651,16 @@ function renderWordbook() {
   }).join("");
   box.querySelectorAll("[data-wb-toggle]").forEach((b) => (b.onclick = () => { setWbStatus(b.dataset.wbToggle, b.dataset.wbCur === "mastered" ? "learning" : "mastered"); renderWordbook(); }));
   box.querySelectorAll("[data-wb-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.wbRm); renderWordbook(); }));
+  box.querySelectorAll("[data-speak]").forEach((b) => (b.onclick = () => speakWord(b.dataset.speak)));
+}
+
+function reviewLabel(stats) {
+  if (!stats || !stats.seen) return "尚未学习";
+  const remaining = finiteNumber(stats.nextReviewAt) - Date.now();
+  if (remaining <= 0) return "现在复习";
+  if (remaining < 3600000) return `${Math.max(1, Math.ceil(remaining / 60000))} 分钟后复习`;
+  if (remaining < DAY_MS) return `${Math.max(1, Math.ceil(remaining / 3600000))} 小时后复习`;
+  return `${Math.ceil(remaining / DAY_MS)} 天后复习`;
 }
 
 /* ---------- 词表 ---------- */
@@ -420,7 +679,8 @@ function renderGlossary() {
   box.innerHTML = head.map((w) => {
     const key = w.word.toLowerCase();
     const inWb = WB.some((x) => x.word === key);
-    const custom = customSet.has(key) ? `<span class="badge new">自定义</span>` : "";
+    const isCustom = customSet.has(key);
+    const custom = isCustom ? `<span class="badge new">自定义</span>` : "";
     const addBtn = inWb
       ? `<button class="mini-btn added" disabled>✓ 已收藏</button>`
       : `<button class="mini-btn" data-gl-add="${esc(w.word)}">+ 收藏</button>`;
@@ -429,27 +689,36 @@ function renderGlossary() {
         <div><span class="item-word">${esc(w.word)}</span>${w.phonetic ? `<span class="item-phonetic">${esc(w.phonetic)}</span>` : ""} ${custom}</div>
         <div class="item-meaning">${esc(w.meaning)}</div>
       </div>
-      <div class="item-actions">${addBtn}</div>
+      <div class="item-actions">
+        <button class="mini-btn" data-speak="${esc(w.word)}" aria-label="朗读 ${esc(w.word)}">🔊</button>
+        ${addBtn}
+        ${isCustom ? `<button class="mini-btn" data-custom-edit="${esc(key)}">编辑</button><button class="mini-btn danger" data-custom-rm="${esc(key)}">删除</button>` : ""}
+      </div>
     </div>`;
   }).join("");
   if (list.length > glShown) {
     box.insertAdjacentHTML("beforeend", `<button class="btn small" id="glMore">显示更多（还剩 ${list.length - glShown} 个）</button>`);
     $("#glMore").onclick = () => { glShown += 200; renderGlossary(); };
   }
-  box.querySelectorAll("[data-gl-add]").forEach((b) => (b.onclick = () => { const e = BYWORD.get(b.dataset.glAdd.toLowerCase()); if (e) { addToWordbook(e, false); renderGlossary(); } }));
+  box.querySelectorAll("[data-gl-add]").forEach((b) => (b.onclick = () => { const e = BYWORD.get(wordKey(b.dataset.glAdd)); if (e) { addToWordbook(e); renderGlossary(); } }));
+  box.querySelectorAll("[data-speak]").forEach((b) => (b.onclick = () => speakWord(b.dataset.speak)));
+  box.querySelectorAll("[data-custom-edit]").forEach((b) => (b.onclick = () => editCustomWord(b.dataset.customEdit)));
+  box.querySelectorAll("[data-custom-rm]").forEach((b) => (b.onclick = () => deleteCustomWord(b.dataset.customRm)));
 }
 
 /* ---------- 统计 ---------- */
 function renderStats() {
-  const uniqueSeen = Object.keys(WSTATS).length;
+  const uniqueSeen = Object.values(WSTATS).filter((item) => item.seen > 0).length;
   const total = STATS.total;
   const acc = total.right + total.wrong > 0 ? Math.round((total.right / (total.right + total.wrong)) * 100) : 0;
   const mastered = WB.filter((x) => x.status === "mastered").length;
+  const due = buildPool("due").length;
   const today = todayStats().seen;
   $("#statGrid").innerHTML = `
     <div class="stat-card"><div class="num">${uniqueSeen}</div><div class="lbl">累计学过单词</div></div>
     <div class="stat-card"><div class="num">${today}</div><div class="lbl">今日已学</div></div>
     <div class="stat-card"><div class="num">${acc}%</div><div class="lbl">总正确率</div></div>
+    <div class="stat-card"><div class="num">${due}</div><div class="lbl">今日待复习</div></div>
     <div class="stat-card"><div class="num">${WB.length}</div><div class="lbl">单词本 / 已掌握 ${mastered}</div></div>`;
   const days = [];
   for (let i = 6; i >= 0; i--) {
@@ -477,10 +746,10 @@ function renderGoal() { updateGoal(); }
 function updateGoal() {
   const t = todayStats().seen;
   const g = SETTINGS.dailyGoal;
-  $("#goalBadge").textContent = `今日 ${t}/${g}`;
+  const badge = $("#goalBadge");
+  badge.textContent = `今日 ${t}/${g}`;
   const done = t >= g;
-  $("#goalBadge").style.background = done ? "#d1fae5" : "#fff";
-  $("#goalBadge").style.color = done ? "#065f46" : "var(--primary-dark)";
+  badge.classList.toggle("done", done);
 }
 
 /* ---------- 持久化 ---------- */
@@ -510,9 +779,14 @@ function bindEvents() {
   let chosenMode = "en2zh";
   $$(".mode-card").forEach((c) => (c.onclick = () => {
     chosenMode = c.dataset.mode;
-    $$(".mode-card").forEach((x) => x.classList.toggle("selected", x === c));
+    $$(".mode-card").forEach((x) => {
+      const selected = x === c;
+      x.classList.toggle("selected", selected);
+      x.setAttribute("aria-pressed", String(selected));
+    });
   }));
   $$(".mode-card")[0].classList.add("selected");
+  $$(".mode-card").forEach((card, index) => card.setAttribute("aria-pressed", String(index === 0)));
   $("#quizCount").onchange = () => {
     const isCustom = $("#quizCount").value === "custom";
     $("#quizCountCustom").classList.toggle("hidden", !isCustom);
@@ -520,14 +794,17 @@ function bindEvents() {
   };
   $("#startQuiz").onclick = () => {
     const count = resolveQuizCount();
-    if (count == null) { alert("请输入有效的自定义题目数量（至少 1 题）。"); return; }
+    if (count == null) { notify("请输入有效的自定义题目数量（至少 1 题）。", "error"); return; }
     startQuiz(chosenMode, $("#quizScope").value, count);
   };
   $("#quizQuit").onclick = () => { if (confirm("确定结束本组学习？")) backToSetup(); };
+  $("#previewStartTest").onclick = beginTest;
+  $("#previewBack").onclick = backToSetup;
 
   // 单词本
   $("#wbSearch").oninput = renderWordbook;
   $("#wbFilter").onchange = renderWordbook;
+  $("#wbSort").onchange = renderWordbook;
   $("#wbReview").onclick = () => startQuiz("en2zh", "wordbook", Math.min(20, WB.length || 1));
 
   // 词表
@@ -537,13 +814,18 @@ function bindEvents() {
   $("#saveGoal").onclick = () => {
     const v = Math.max(5, Math.min(500, Number($("#setGoal").value) || 20));
     SETTINGS.dailyGoal = v;
-    persist(); updateGoal(); alert(`每日目标已设为 ${v} 题`);
+    persist(); updateGoal(); notify(`每日目标已设为 ${v} 题`);
   };
   $("#setAutoAdd").onchange = () => { SETTINGS.autoAddWrong = $("#setAutoAdd").checked; persist(); };
   $("#addWordBtn").onclick = addCustomWord;
   $("#importBtn").onclick = importWords;
   $("#exportBtn").onclick = exportData;
   $("#importDataInput").onchange = importData;
+  $("#wordEditForm").onsubmit = saveCustomWordEdit;
+  $("#wordDialogClose").onclick = closeWordDialog;
+  $("#wordDialogCancel").onclick = closeWordDialog;
+  $("#editWord").oninput = () => $("#editWord").setCustomValidity("");
+  $("#wordDialog").onclick = (event) => { if (event.target === $("#wordDialog")) closeWordDialog(); };
   $("#resetBtn").onclick = () => {
     if (confirm("确定清空所有学习数据？此操作不可恢复！")) {
       Object.values(LS).forEach((k) => localStorage.removeItem(k));
@@ -553,11 +835,12 @@ function bindEvents() {
 
   // 键盘
   document.addEventListener("keydown", (e) => {
-    if (!QUIZ_ACTIVE || $("#studyQuiz").classList.contains("hidden")) return;
+    if (!QUIZ_ACTIVE || !$("#view-study").classList.contains("active") || $("#studyQuiz").classList.contains("hidden")) return;
     if (q.mode === "card") return;
     const typingInSpell = q.mode === "spell" && e.target && e.target.id === "spellInput";
-    if (!q.answered && /^[1-4]$/.test(e.key)) {
-      const i = Number(e.key) - 1;
+    const optionKey = /^[1-4]$/.test(e.key) ? Number(e.key) - 1 : "abcd".indexOf(e.key.toLowerCase());
+    if (!q.answered && !typingInSpell && optionKey >= 0) {
+      const i = optionKey;
       if (i < q.options.length) answer(i);
     } else if (q.answered && (e.key === "Enter" || e.key === " ") && !typingInSpell) {
       e.preventDefault();
@@ -571,51 +854,116 @@ function bindEvents() {
 function parseEntryLine(line) {
   line = line.trim();
   if (!line) return null;
-  const m = line.match(/^([A-Za-z][A-Za-z'\- ]*?)\s*(?:\[([^\]]*)\])?\s*(.+)$/);
-  if (!m) return null;
-  const word = m[1].trim().split(/\s+/)[0];
-  const phonetic = (m[2] || "").trim();
-  const meaning = (m[3] || "").trim();
-  if (!word || !meaning) return null;
-  return { word, phonetic, meaning };
+  const bracketed = line.match(/^([A-Za-z][A-Za-z'\- ]*?)\s*\[([^\]]*)\]\s*(.+)$/);
+  if (bracketed) {
+    return { word: bracketed[1].trim(), phonetic: bracketed[2].trim(), meaning: bracketed[3].trim() };
+  }
+  const plain = line.match(/^([A-Za-z][A-Za-z'\-]*)\s+(.+)$/);
+  if (!plain) return null;
+  return { word: plain[1].trim(), phonetic: "", meaning: plain[2].trim() };
 }
 
 function addCustomWord() {
   const word = $("#addWord").value.trim();
   const phonetic = $("#addPhonetic").value.trim();
   const meaning = $("#addMeaning").value.trim();
-  if (!word || !meaning) { alert("请填写单词和释义。"); return; }
-  const key = word.toLowerCase();
-  if (BYWORD.has(key)) { alert("这个词已存在词库中。"); return; }
-  const entry = { word, phonetic, meaning };
+  if (!word || !meaning) { notify("请填写单词和释义。", "error"); return; }
+  const key = wordKey(word);
+  if (BYWORD.has(key)) { notify("这个词已存在词库中。", "error"); return; }
+  const entry = normalizeEntry({ word, phonetic, meaning });
+  if (!entry) { notify("单词格式不正确，请使用英文字母、空格、连字符或撇号。", "error"); return; }
   CUSTOM.push(entry);
   WORDS.push(entry);
   BYWORD.set(key, entry);
   persist();
   $("#addWord").value = $("#addPhonetic").value = $("#addMeaning").value = "";
-  alert(`已添加：${word}（自定义词会参与学习）`);
+  notify(`已添加 ${word}，自定义词会参与学习`);
+}
+
+function editCustomWord(rawKey) {
+  const key = wordKey(rawKey);
+  const index = CUSTOM.findIndex((entry) => wordKey(entry.word) === key);
+  if (index < 0) return;
+  const current = CUSTOM[index];
+  editingWordKey = key;
+  $("#editWord").value = current.word;
+  $("#editWord").setCustomValidity("");
+  $("#editPhonetic").value = current.phonetic;
+  $("#editMeaning").value = current.meaning;
+  $("#wordDialog").showModal();
+  $("#editWord").focus();
+}
+
+function closeWordDialog() {
+  editingWordKey = null;
+  $("#wordDialog").close();
+}
+
+function saveCustomWordEdit(event) {
+  event.preventDefault();
+  const key = editingWordKey;
+  const index = CUSTOM.findIndex((entry) => wordKey(entry.word) === key);
+  if (!key || index < 0) { closeWordDialog(); return; }
+  const word = $("#editWord").value;
+  const phonetic = $("#editPhonetic").value;
+  const meaning = $("#editMeaning").value;
+  const entry = normalizeEntry({ word, phonetic, meaning });
+  if (!entry) {
+    $("#editWord").setCustomValidity("请使用英文字母、空格、连字符或撇号。");
+    $("#editWord").reportValidity();
+    return;
+  }
+  const newKey = wordKey(entry.word);
+  if (newKey !== key && BYWORD.has(newKey)) {
+    $("#editWord").setCustomValidity("这个词已经存在词库中。");
+    $("#editWord").reportValidity();
+    return;
+  }
+  CUSTOM[index] = entry;
+  if (newKey !== key) {
+    WB.forEach((item) => { if (item.word === key) item.word = newKey; });
+    if (WSTATS[key]) { WSTATS[newKey] = WSTATS[key]; delete WSTATS[key]; }
+  }
+  rebuildWords();
+  persist();
+  closeWordDialog();
+  renderGlossary();
+  notify(`已保存 ${entry.word}`);
+}
+
+function deleteCustomWord(rawKey) {
+  const key = wordKey(rawKey);
+  const entry = CUSTOM.find((item) => wordKey(item.word) === key);
+  if (!entry || !confirm(`确定删除自定义单词“${entry.word}”？相关学习记录也会删除。`)) return;
+  CUSTOM = CUSTOM.filter((item) => wordKey(item.word) !== key);
+  WB = WB.filter((item) => item.word !== key);
+  delete WSTATS[key];
+  rebuildWords();
+  persist();
+  renderGlossary();
 }
 
 function importWords() {
   const text = $("#importText").value;
   let ok = 0, skip = 0;
   for (const line of text.split("\n")) {
-    const e = parseEntryLine(line);
+    if (!line.trim()) continue;
+    const e = normalizeEntry(parseEntryLine(line));
     if (!e) { skip++; continue; }
-    const key = e.word.toLowerCase();
+    const key = wordKey(e.word);
     if (BYWORD.has(key)) { skip++; continue; }
     CUSTOM.push(e); WORDS.push(e); BYWORD.set(key, e); ok++;
   }
   persist();
   renderGlossary();
-  alert(`导入完成：成功 ${ok} 个，跳过 ${skip} 个（重复或格式不对）。`);
+  notify(`导入完成：成功 ${ok} 个，跳过 ${skip} 个`);
 }
 
 /* ---------- 数据备份 ---------- */
 function exportData() {
   const data = {
+    version: DATA_VERSION,
     exportedAt: new Date().toISOString(),
-    words: WORDS,
     custom: CUSTOM,
     wordbook: WB,
     wordstats: WSTATS,
@@ -637,24 +985,50 @@ function importData(e) {
   reader.onload = () => {
     try {
       const d = JSON.parse(reader.result);
-      if (d.wordbook) WB = d.wordbook;
-      if (d.wordstats) WSTATS = d.wordstats;
-      if (d.stats) STATS = d.stats;
-      if (d.settings) SETTINGS = { dailyGoal: 20, autoAddWrong: true, ...d.settings };
-      if (d.custom && Array.isArray(d.custom)) {
-        CUSTOM = d.custom;
-        WORDS = BUILTIN.concat(CUSTOM);
-        BYWORD = new Map(WORDS.map((w) => [w.word.toLowerCase(), w]));
-      }
+      const imported = validateBackup(d);
+      CUSTOM = imported.custom;
+      rebuildWords();
+      const validWords = new Set(WORDS.map((entry) => wordKey(entry.word)));
+      WB = imported.wordbook.filter((item) => validWords.has(item.word));
+      WSTATS = Object.fromEntries(Object.entries(imported.wordstats).filter(([word]) => validWords.has(word)));
+      STATS = imported.stats;
+      SETTINGS = imported.settings;
       persist();
-      alert("学习数据已导入！");
+      notify("学习数据已导入");
       showView("stats");
     } catch (err) {
-      alert("导入失败：文件格式不正确。");
+      notify("导入失败：文件格式不正确。", "error");
     }
   };
+  reader.onerror = () => notify("导入失败：无法读取备份文件。", "error");
   reader.readAsText(file);
   e.target.value = "";
+}
+
+function validateBackup(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("invalid root");
+  if (nonNegativeInt(data.version) > DATA_VERSION) throw new Error("newer backup");
+  if (!Array.isArray(data.custom) || !Array.isArray(data.wordbook)) throw new Error("invalid arrays");
+  if (!data.wordstats || typeof data.wordstats !== "object" || Array.isArray(data.wordstats)) throw new Error("invalid wordstats");
+  if (!data.stats || typeof data.stats !== "object" || Array.isArray(data.stats)) throw new Error("invalid stats");
+  if (!data.settings || typeof data.settings !== "object" || Array.isArray(data.settings)) throw new Error("invalid settings");
+
+  const builtinKeys = new Set(BUILTIN.map((entry) => wordKey(entry.word)));
+  const customKeys = new Set();
+  const custom = data.custom.flatMap((raw) => {
+    const entry = normalizeEntry(raw);
+    const key = entry && wordKey(entry.word);
+    if (!entry || builtinKeys.has(key) || customKeys.has(key)) return [];
+    customKeys.add(key);
+    return [entry];
+  });
+  return {
+    custom,
+    wordbook: normalizeWordbook(data.wordbook),
+    wordstats: normalizeWordStats(data.wordstats),
+    stats: normalizeStats(data.stats),
+    settings: normalizeSettings(data.settings),
+  };
 }
 
 /* ---------- 启动 ---------- */

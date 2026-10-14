@@ -3,203 +3,127 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>六级背单词</title>
-<link rel="stylesheet" href="style.css">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="简洁、专注的六级英语词汇学习工具">
+<title>拾词 · 六级词汇训练</title>
+<link rel="stylesheet" href="style.css?v=20261014-study">
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand">📚 六级背单词</div>
-    <nav class="tabs" id="tabs">
+    <div class="brand" aria-label="拾词 六级词汇训练">
+      <span class="brand-copy"><strong>拾词</strong><small>六级词汇训练</small></span>
+    </div>
+    <nav class="tabs" id="tabs" aria-label="主导航">
       <button class="tab active" data-view="study">学习</button>
       <button class="tab" data-view="wordbook">单词本</button>
       <button class="tab" data-view="glossary">词表</button>
       <button class="tab" data-view="stats">统计</button>
       <button class="tab" data-view="settings">设置</button>
     </nav>
-    <div class="goal" id="goalBadge" title="今日学习进度"></div>
+    <div class="goal" id="goalBadge" title="今日学习进度" aria-live="polite"></div>
   </header>
 
   <main>
-    <!-- ========== 学习 ========== -->
     <section id="view-study" class="view active">
-      <!-- 准备界面 -->
-      <div id="studySetup" class="panel">
-        <h2>开始学习</h2>
-        <div class="mode-grid">
-          <button class="mode-card" data-mode="en2zh">
-            <span class="mode-emoji">🇬🇧→🇨🇳</span>
-            <span class="mode-name">英译中</span>
-            <span class="mode-desc">看英文选中文释义</span>
-          </button>
-          <button class="mode-card" data-mode="zh2en">
-            <span class="mode-emoji">🇨🇳→🇬🇧</span>
-            <span class="mode-name">中译英 · 选择</span>
-            <span class="mode-desc">看中文选英文单词</span>
-          </button>
-          <button class="mode-card" data-mode="spell">
-            <span class="mode-emoji">✍️</span>
-            <span class="mode-name">中译英 · 拼写</span>
-            <span class="mode-desc">看中文，输入英文单词</span>
-          </button>
-          <button class="mode-card" data-mode="card">
-            <span class="mode-emoji">🃏</span>
-            <span class="mode-name">卡片模式</span>
-            <span class="mode-desc">翻卡片自测回忆</span>
-          </button>
+      <div id="studySetup" class="panel study-panel">
+        <div class="setup-hero">
+          <div class="hero-copy">
+            <h1>单词学习</h1>
+            <p>先背单词，再完成选择与拼写测试。答错的词会继续补测。</p>
+          </div>
         </div>
 
-        <div class="field">
-          <label>学习范围</label>
-          <select id="quizScope">
-            <option value="all">全部单词</option>
-            <option value="new">未学过的单词</option>
-            <option value="wrong">答错过(生词)</option>
-            <option value="wordbook">单词本中的词</option>
-          </select>
+        <div class="section-heading"><span class="step-number">01</span><div><h2>选择第一轮的出题方向</h2><p>先记忆 → 选择测试 → 拼写测试。每轮错词反复补测，直到全部答对。</p></div></div>
+        <div class="mode-grid">
+          <button class="mode-card" data-mode="en2zh"><span class="mode-name">英译中</span><span class="mode-desc">看英文选中文释义</span></button>
+          <button class="mode-card" data-mode="zh2en"><span class="mode-name">中译英</span><span class="mode-desc">看中文选英文单词</span></button>
         </div>
-        <div class="field">
-          <label>题目数量</label>
-          <select id="quizCount">
-            <option value="10">10 题</option>
-            <option value="20" selected>20 题</option>
-            <option value="30">30 题</option>
-            <option value="50">50 题</option>
-            <option value="custom">自定义…</option>
-          </select>
-          <input type="number" id="quizCountCustom" class="hidden" min="1" placeholder="自定义题数（至少 1 题）" value="100">
+
+        <div class="section-heading compact"><span class="step-number">02</span><div><h2>学习范围与数量</h2><p>所选单词都会进行选择和拼写测试。</p></div></div>
+        <div class="setup-actions">
+          <div class="setup-controls">
+            <div class="field"><label for="quizScope">学习范围</label><select id="quizScope"><option value="due">今日待复习</option><option value="all" selected>全部单词</option><option value="new">未学过的单词</option><option value="wrong">答错过（生词）</option><option value="wordbook">单词本中的词</option></select></div>
+            <div class="field"><label for="quizCount">题目数量</label><select id="quizCount"><option value="10">10 题</option><option value="20" selected>20 题</option><option value="30">30 题</option><option value="50">50 题</option><option value="custom">自定义…</option></select><input type="number" id="quizCountCustom" class="hidden" min="1" placeholder="自定义题数（至少 1 题）" value="100"></div>
+          </div>
+          <button type="button" class="btn primary big" id="startQuiz"><span>查看本轮单词表</span><span aria-hidden="true">→</span></button>
         </div>
-        <button class="btn primary big" id="startQuiz">开始学习</button>
       </div>
 
-      <!-- 答题界面 -->
-      <div id="studyQuiz" class="panel hidden">
-        <div class="quiz-top">
-          <span id="quizProgressText">第 1 / 20 题</span>
-          <div class="progress"><div id="quizProgressBar"></div></div>
-          <button class="btn ghost small" id="quizQuit">结束</button>
+      <div id="studyPreview" class="panel hidden">
+        <div class="panel-head">
+          <div><h2 id="previewTitle" tabindex="-1">本轮单词表</h2><p>先记忆英文、音标和释义，准备好后再开始测试。</p></div>
+          <span id="previewCount" class="count-pill muted"></span>
         </div>
-        <div class="card" id="quizCard">
-          <div class="card-word" id="quizWord">—</div>
-          <div class="card-phonetic" id="quizPhonetic"></div>
-          <div class="card-meaning hidden" id="quizMeaning"></div>
+        <div id="previewList" class="preview-list"></div>
+        <div class="preview-actions">
+          <button class="btn" id="previewBack">返回调整</button>
+          <button type="button" class="btn primary" id="previewStartTest">记好了，开始测试 →</button>
         </div>
+        <p class="preview-note">预习不计入答题统计，可按自己的节奏反复记忆。</p>
+      </div>
+
+      <div id="studyQuiz" class="panel quiz-panel hidden">
+        <p id="quizStage" class="muted" aria-live="polite"></p>
+        <div class="quiz-top"><span id="quizProgressText">第 1 / 20 题</span><div class="progress" id="quizProgress" role="progressbar" aria-label="答题进度" aria-valuemin="0" aria-valuemax="20" aria-valuenow="1"><div id="quizProgressBar"></div></div><button class="btn ghost small" id="quizQuit">结束</button></div>
+        <div class="card" id="quizCard"><div class="card-word" id="quizWord">—</div><div class="card-phonetic" id="quizPhonetic"></div><div class="card-meaning hidden" id="quizMeaning"></div><button class="speak-btn hidden" id="quizSpeak" type="button" title="朗读单词" aria-label="朗读当前单词">🔊</button></div>
         <div class="options" id="quizOptions"></div>
-        <div class="feedback hidden" id="quizFeedback"></div>
+        <div class="feedback hidden" id="quizFeedback" aria-live="polite"></div>
         <button class="btn primary big hidden" id="quizNext">下一题 →</button>
       </div>
 
-      <!-- 结果界面 -->
-      <div id="studySummary" class="panel hidden">
-        <h2 id="summaryTitle">本组完成！</h2>
-        <div class="summary-stats" id="summaryStats"></div>
-        <div id="summaryWrong" class="summary-wrong"></div>
-        <div class="row">
-          <button class="btn primary" id="summaryRetry">重练错词</button>
-          <button class="btn" id="summaryAgain">再来一组</button>
-          <button class="btn ghost" id="summaryHome">返回</button>
-        </div>
+      <div id="studySummary" class="panel summary-panel hidden">
+        <span class="eyebrow">SESSION COMPLETE</span><h2 id="summaryTitle">本组完成！</h2><div class="summary-stats" id="summaryStats"></div><div id="summaryWrong" class="summary-wrong"></div>
+        <div class="row summary-actions"><button class="btn primary" id="summaryRetry">重练错词</button><button class="btn" id="summaryAgain">再来一组</button><button class="btn ghost" id="summaryHome">返回</button></div>
       </div>
     </section>
 
-    <!-- ========== 单词本 ========== -->
     <section id="view-wordbook" class="view">
       <div class="panel">
-        <div class="panel-head">
-          <h2>📒 我的单词本</h2>
-          <div class="head-actions">
-            <span class="muted" id="wbCount"></span>
-            <button class="btn primary" id="wbReview">复习单词本</button>
-          </div>
-        </div>
-        <div class="list-filter">
-          <input type="search" id="wbSearch" placeholder="搜索单词或释义…">
-          <select id="wbFilter">
-            <option value="all">全部</option>
-            <option value="learning">学习中</option>
-            <option value="mastered">已掌握</option>
-          </select>
-        </div>
+        <div class="panel-head"><div><span class="eyebrow">MY COLLECTION</span><h2>我的单词本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span><button class="btn primary" id="wbReview">复习单词本</button></div></div>
+        <div class="list-filter"><input type="search" id="wbSearch" placeholder="搜索单词或释义…" aria-label="搜索单词本"><select id="wbFilter" aria-label="筛选单词本状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select id="wbSort" aria-label="单词本排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
         <div id="wbList" class="list"></div>
-        <div id="wbEmpty" class="empty hidden">单词本还是空的～ 学习时答错的词会自动加入，也可以在「词表」里手动收藏。</div>
+        <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>答错的词会自动来到这里，也可以从全部词表中收藏。</p></div>
       </div>
     </section>
 
-    <!-- ========== 词表 ========== -->
     <section id="view-glossary" class="view">
       <div class="panel">
-        <div class="panel-head">
-          <h2>📖 全部词表 <span class="muted" id="glCount"></span></h2>
-        </div>
-        <div class="list-filter">
-          <input type="search" id="glSearch" placeholder="搜索英文单词或中文释义…">
-        </div>
+        <div class="panel-head"><div><span class="eyebrow">WORD LIBRARY</span><h2>全部词表 <span class="muted" id="glCount"></span></h2><p>浏览、搜索并收藏想要重点记忆的词。</p></div></div>
+        <div class="list-filter"><input type="search" id="glSearch" placeholder="搜索英文单词或中文释义…" aria-label="搜索全部词表"></div>
         <div id="glList" class="list"></div>
-        <div id="glEmpty" class="empty hidden">没有找到匹配的单词。</div>
+        <div id="glEmpty" class="empty hidden"><span>⌕</span><strong>没有找到匹配的单词</strong><p>换一个关键词试试看。</p></div>
       </div>
     </section>
 
-    <!-- ========== 统计 ========== -->
     <section id="view-stats" class="view">
-      <div class="panel">
-        <h2>📊 学习统计</h2>
-        <div class="stat-grid" id="statGrid"></div>
-        <h3>最近 7 天</h3>
-        <div class="bars" id="statBars"></div>
-      </div>
+      <div class="panel"><div class="page-heading"><span class="eyebrow">YOUR PROGRESS</span><h2>学习统计</h2><p>每一次作答，都在为长期记忆积累证据。</p></div><div class="stat-grid" id="statGrid"></div><h3 class="chart-title">最近 7 天练习量</h3><div class="bars" id="statBars"></div></div>
     </section>
 
-    <!-- ========== 设置 ========== -->
     <section id="view-settings" class="view">
       <div class="panel">
-        <h2>⚙️ 设置</h2>
-
-        <div class="field">
-          <label>每日目标（题数）</label>
-          <div class="row">
-            <input type="number" id="setGoal" min="5" max="500" value="20">
-            <button class="btn primary" id="saveGoal">保存</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <label><input type="checkbox" id="setAutoAdd" checked> 答错的词自动加入单词本</label>
-        </div>
-
-        <hr>
-        <h3>➕ 添加自定义单词</h3>
-        <div class="form-grid">
-          <input type="text" id="addWord" placeholder="单词，如：algorithm">
-          <input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）">
-          <input type="text" id="addMeaning" placeholder="释义，如：n. 算法">
-        </div>
-        <button class="btn primary" id="addWordBtn">添加单词</button>
-
-        <hr>
-        <h3>📥 导入词表</h3>
-        <p class="muted">每行一个单词，格式：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。导入的词会加入自定义词库，可参与学习。</p>
-        <textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试"></textarea>
-        <div class="row">
-          <button class="btn" id="importBtn">导入</button>
-        </div>
-
-        <hr>
-        <h3>💾 数据备份</h3>
-        <div class="row">
-          <button class="btn" id="exportBtn">导出学习数据</button>
-          <label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label>
-        </div>
-
-        <hr>
-        <h3 class="danger">🗑 危险操作</h3>
-        <div class="row">
-          <button class="btn danger" id="resetBtn">清空所有学习数据</button>
-        </div>
+        <div class="page-heading"><span class="eyebrow">PREFERENCES</span><h2>设置</h2><p>调整学习习惯，管理你的词库和本地数据。</p></div>
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（题数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入单词本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
+        <div class="settings-section"><div class="settings-title"><span>02</span><div><h3>添加自定义单词</h3><p>补充课堂、阅读或工作中遇到的新词。</p></div></div><div class="form-grid"><input type="text" id="addWord" placeholder="单词，如：algorithm" aria-label="自定义英文单词"><input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）" aria-label="自定义单词音标"><input type="text" id="addMeaning" placeholder="释义，如：n. 算法" aria-label="自定义单词释义"></div><button class="btn primary" id="addWordBtn">添加到词库</button></div>
+        <div class="settings-section"><div class="settings-title"><span>03</span><div><h3>批量导入词表</h3><p>每行一个：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。</p></div></div><textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试" aria-label="批量导入词表内容"></textarea><div class="row"><button class="btn" id="importBtn">导入词表</button></div></div>
+        <div class="settings-section settings-data"><div class="settings-title"><span>04</span><div><h3>数据备份</h3><p>所有记录仅保存在这台设备的浏览器中。</p></div></div><div class="row"><button class="btn" id="exportBtn">导出学习数据</button><label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label></div></div>
+        <div class="settings-section danger-zone"><div><h3>清空所有数据</h3><p>删除学习记录、自定义词和个人设置，此操作无法撤销。</p></div><button class="btn danger" id="resetBtn">清空数据</button></div>
       </div>
     </section>
   </main>
 </div>
 
-<script src="app.js"></script>
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+<dialog class="word-dialog" id="wordDialog" aria-labelledby="wordDialogTitle">
+  <form id="wordEditForm">
+    <div class="dialog-head"><div><span class="eyebrow">CUSTOM WORD</span><h2 id="wordDialogTitle">编辑自定义单词</h2></div><button class="dialog-close" id="wordDialogClose" type="button" aria-label="关闭">×</button></div>
+    <div class="field"><label for="editWord">单词</label><input id="editWord" type="text" required></div>
+    <div class="field"><label for="editPhonetic">音标</label><input id="editPhonetic" type="text" placeholder="可留空"></div>
+    <div class="field"><label for="editMeaning">释义</label><input id="editMeaning" type="text" required></div>
+    <div class="dialog-actions"><button class="btn" id="wordDialogCancel" type="button">取消</button><button class="btn primary" type="submit">保存修改</button></div>
+  </form>
+</dialog>
+
+<script src="app.js?v=20261014-learn-first"></script>
 </body>
 </html>
