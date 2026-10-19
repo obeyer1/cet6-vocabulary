@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="简洁、专注的六级英语词汇学习工具">
 <title>拾词 · 六级词汇训练</title>
-<link rel="stylesheet" href="style.css?v=20261014-study">
+<link rel="stylesheet" href="style.css?v=20261019-preview-back-top">
 </head>
 <body>
 <div class="app">
@@ -16,6 +16,7 @@
     </div>
     <nav class="tabs" id="tabs" aria-label="主导航">
       <button class="tab active" data-view="study">学习</button>
+      <button class="tab" data-view="learned">已学单词</button>
       <button class="tab" data-view="wordbook">单词本</button>
       <button class="tab" data-view="glossary">词表</button>
       <button class="tab" data-view="stats">统计</button>
@@ -30,20 +31,20 @@
         <div class="setup-hero">
           <div class="hero-copy">
             <h1>单词学习</h1>
-            <p>先背单词，再完成选择与拼写测试。答错的词会继续补测。</p>
+            <p>先背单词，再完成选择、听写与拼写测试。答错的词会继续补测。</p>
           </div>
         </div>
 
-        <div class="section-heading"><span class="step-number">01</span><div><h2>选择第一轮的出题方向</h2><p>先记忆 → 选择测试 → 拼写测试。每轮错词反复补测，直到全部答对。</p></div></div>
+        <div class="section-heading"><span class="step-number">01</span><div><h2>选择第一轮的出题方向</h2><p>先记忆 → 选择测试 → 听写测试 → 拼写测试。每轮错词反复补测，直到全部答对。</p></div></div>
         <div class="mode-grid">
           <button class="mode-card" data-mode="en2zh"><span class="mode-name">英译中</span><span class="mode-desc">看英文选中文释义</span></button>
           <button class="mode-card" data-mode="zh2en"><span class="mode-name">中译英</span><span class="mode-desc">看中文选英文单词</span></button>
         </div>
 
-        <div class="section-heading compact"><span class="step-number">02</span><div><h2>学习范围与数量</h2><p>所选单词都会进行选择和拼写测试。</p></div></div>
+        <div class="section-heading compact"><span class="step-number">02</span><div><h2>学习范围与数量</h2><p>所选单词都会进行选择、听写和拼写测试。</p></div></div>
         <div class="setup-actions">
           <div class="setup-controls">
-            <div class="field"><label for="quizScope">学习范围</label><select id="quizScope"><option value="due">今日待复习</option><option value="all" selected>全部单词</option><option value="new">未学过的单词</option><option value="wrong">答错过（生词）</option><option value="wordbook">单词本中的词</option></select></div>
+            <div class="field"><label for="quizScope">学习范围</label><select id="quizScope"><option value="due">今日待复习</option><option value="all" selected>全部单词</option><option value="new">未学过的单词</option><option value="learned">已学单词</option><option value="wrong">答错过（生词）</option><option value="wordbook">单词本中的词</option></select></div>
             <div class="field"><label for="quizCount">题目数量</label><select id="quizCount"><option value="10">10 题</option><option value="20" selected>20 题</option><option value="30">30 题</option><option value="50">50 题</option><option value="custom">自定义…</option></select><input type="number" id="quizCountCustom" class="hidden" min="1" placeholder="自定义题数（至少 1 题）" value="100"></div>
           </div>
           <button type="button" class="btn primary big" id="startQuiz"><span>查看本轮单词表</span><span aria-hidden="true">→</span></button>
@@ -51,19 +52,20 @@
       </div>
 
       <div id="studyPreview" class="panel hidden">
+        <div class="preview-nav"><button type="button" class="btn ghost small" id="previewBack">← 返回调整</button></div>
         <div class="panel-head">
           <div><h2 id="previewTitle" tabindex="-1">本轮单词表</h2><p>先记忆英文、音标和释义，准备好后再开始测试。</p></div>
           <span id="previewCount" class="count-pill muted"></span>
         </div>
         <div id="previewList" class="preview-list"></div>
         <div class="preview-actions">
-          <button class="btn" id="previewBack">返回调整</button>
           <button type="button" class="btn primary" id="previewStartTest">记好了，开始测试 →</button>
         </div>
         <p class="preview-note">预习不计入答题统计，可按自己的节奏反复记忆。</p>
       </div>
 
       <div id="studyQuiz" class="panel quiz-panel hidden">
+        <button class="btn ghost small" id="quizBack" type="button">← 返回</button>
         <p id="quizStage" class="muted" aria-live="polite"></p>
         <div class="quiz-top"><span id="quizProgressText">第 1 / 20 题</span><div class="progress" id="quizProgress" role="progressbar" aria-label="答题进度" aria-valuemin="0" aria-valuemax="20" aria-valuenow="1"><div id="quizProgressBar"></div></div><button class="btn ghost small" id="quizQuit">结束</button></div>
         <div class="card" id="quizCard"><div class="card-word" id="quizWord">—</div><div class="card-phonetic" id="quizPhonetic"></div><div class="card-meaning hidden" id="quizMeaning"></div><button class="speak-btn hidden" id="quizSpeak" type="button" title="朗读单词" aria-label="朗读当前单词">🔊</button></div>
@@ -78,9 +80,32 @@
       </div>
     </section>
 
+    <section id="view-learned" class="view">
+      <div class="panel">
+        <div class="panel-head"><div><span class="eyebrow">LEARNED WORDS</span><h2>已学单词</h2><p>作答过的单词会自动收录。可复习单个单词，也可选择数量，按当前筛选顺序复习。</p></div><div class="head-actions"><span class="muted count-pill" id="learnedCount"></span></div></div>
+        <div class="review-controls">
+          <label for="learnedReviewCount">复习 / 测试单词数</label>
+          <select id="learnedReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
+          <input type="number" id="learnedReviewCountCustom" class="hidden" min="1" step="1" placeholder="输入单词数" aria-label="自定义复习单词数">
+          <button class="btn primary" id="learnedReview">复习当前列表</button>
+          <span class="muted">不足所选数量时，复习全部可用单词。</span>
+        </div>
+        <div class="list-filter"><input type="search" id="learnedSearch" placeholder="搜索单词或释义…" aria-label="搜索已学单词"><select id="learnedFilter" aria-label="筛选已学单词"><option value="all">全部已学</option><option value="due">到期需复习</option><option value="wrong">曾经答错</option></select><select id="learnedSort" aria-label="已学单词排序"><option value="review">待复习优先</option><option value="recent">最近学习优先</option><option value="wrong">错误次数优先</option></select></div>
+        <div id="learnedList" class="list"></div>
+        <div id="learnedEmpty" class="empty hidden"><span>○</span><strong id="learnedEmptyTitle">还没有已学单词</strong><p id="learnedEmptyHint">完成一次作答后，单词就会出现在这里。</p></div>
+      </div>
+    </section>
+
     <section id="view-wordbook" class="view">
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow">MY COLLECTION</span><h2>我的单词本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span><button class="btn primary" id="wbReview">复习单词本</button></div></div>
+        <div class="panel-head"><div><span class="eyebrow">MY COLLECTION</span><h2>我的单词本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span></div></div>
+        <div class="review-controls">
+          <label for="wbReviewCount">复习 / 测试单词数</label>
+          <select id="wbReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
+          <input type="number" id="wbReviewCountCustom" class="hidden" min="1" step="1" placeholder="输入单词数" aria-label="自定义复习单词数">
+          <button class="btn primary" id="wbReview">复习单词本</button>
+          <span class="muted">不足所选数量时，复习全部可用单词。</span>
+        </div>
         <div class="list-filter"><input type="search" id="wbSearch" placeholder="搜索单词或释义…" aria-label="搜索单词本"><select id="wbFilter" aria-label="筛选单词本状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select id="wbSort" aria-label="单词本排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
         <div id="wbList" class="list"></div>
         <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>答错的词会自动来到这里，也可以从全部词表中收藏。</p></div>
@@ -124,6 +149,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261014-learn-first"></script>
+<script src="app.js?v=20261019-return-source"></script>
 </body>
 </html>

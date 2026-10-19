@@ -586,3 +586,11 @@ select, input[type="text"], input[type="number"], input[type="search"], textarea
   .mode-name { padding-right: 16px; font-size: 14px; }
   .mode-desc { font-size: 12px; }
 }
+
+/* Review size controls wrap on narrow screens. */
+.review-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+.review-controls select { width: auto; }
+.review-controls input { width: 150px; }
+.review-controls .muted { flex-basis: 100%; }
+
+.preview-nav { margin-bottom: 16px; }
