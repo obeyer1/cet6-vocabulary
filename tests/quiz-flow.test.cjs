@@ -13,7 +13,7 @@ function app({ audioError = null } = {}) {
     if (!elements.has(selector)) {
       const classes = new Set();
       elements.set(selector, {
-        textContent: '', innerHTML: '', value: '', style: {},
+        textContent: '', innerHTML: '', value: '', style: {}, dataset: {},
         classList: {
           add: (...names) => names.forEach(n => classes.add(n)),
           remove: (...names) => names.forEach(n => classes.delete(n)),
@@ -21,6 +21,8 @@ function app({ audioError = null } = {}) {
         },
         setAttribute() {}, removeAttribute() {}, focus() { focused = selector; this.onfocus?.(); },
         querySelector: () => null, querySelectorAll: () => [],
+        insertAdjacentHTML(position, html) { this.innerHTML += html; },
+        showModal() { this.open = true; }, close() { this.open = false; },
       });
     }
     return elements.get(selector);
@@ -51,11 +53,13 @@ function app({ audioError = null } = {}) {
   const run = code => vm.runInContext(code, context);
   get("#learnedReviewCount").value = "20";
   get("#wbReviewCount").value = "20";
+  get("#favReviewCount").value = "20";
   run(`
     WORDS = [
       { word: 'apple', meaning: 'n. 苹果', phonetic: '/apple/' },
       { word: 'pear', meaning: 'n. 梨', phonetic: '/pear/' }
     ];
+    BYWORD = new Map(WORDS.map(w => [w.word, w]));
     SETTINGS = { autoAddWrong: true, dailyGoal: 20 };
     STATS = { total: { seen: 0, right: 0, wrong: 0 }, daily: {} };
     Object.assign(q, { words: WORDS.slice(), pool: WORDS.slice(), mode: 'en2zh',
@@ -116,7 +120,10 @@ test('whole-batch dictation and spelling grade once and retry only mistakes', as
   fill(1); run('submitWrittenBatch(); advance()');
   assert.equal(run('q.mode'), 'spell');
   assert.equal(run('q.pool.length'), 1);
-  fill(); run('submitWrittenBatch(); advance()');
+  fill(); run('submitWrittenBatch()');
+  assert.equal(run('buildPool("learned").length'), 2);
+  assert.equal(run('todayStats().completedWords.length'), 2);
+  run('advance()');
   assert.equal(run('QUIZ_ACTIVE'), false);
   assert.match(get('#summaryTitle').textContent, /三轮全部通过/);
   assert.equal(run('STATS.total.seen'), 9);
@@ -164,8 +171,8 @@ test('learned words exclude unseen entries and support search, due and wrong fil
   run(`
     WORDS.push({ word: 'new', meaning: 'adj. 新的', phonetic: '' });
     WSTATS = {
-      apple: { seen: 3, right: 2, wrong: 1, lastAt: 100, nextReviewAt: 1 },
-      pear: { seen: 1, right: 1, wrong: 0, lastAt: 200, nextReviewAt: Date.now() + DAY_MS },
+      apple: { completedAt: 100, seen: 3, right: 2, wrong: 1, lastAt: 100, nextReviewAt: 1 },
+      pear: { completedAt: 200, seen: 1, right: 1, wrong: 0, lastAt: 200, nextReviewAt: Date.now() + DAY_MS },
       new: { seen: 0 },
       deleted: { seen: 5 }
     };
@@ -198,7 +205,7 @@ test('batch review uses the first 20 filtered words in review order', () => {
   const { run, get } = app();
   run(`
     WORDS = Array.from({ length: 25 }, (_, i) => ({ word: 'word' + i, meaning: '词', phonetic: '' }));
-    WSTATS = Object.fromEntries(WORDS.map((w, i) => [w.word, { seen: 1, right: 1, wrong: 0, nextReviewAt: i + 1 }]));
+    WSTATS = Object.fromEntries(WORDS.map((w, i) => [w.word, { completedAt: 100, seen: 1, right: 1, wrong: 0, nextReviewAt: i + 1 }]));
     var started;
     startQuiz = (...args) => { started = args; };
   `);
@@ -214,14 +221,17 @@ test('batch review uses the first 20 filtered words in review order', () => {
   assert.equal(run('started[3][0].word'), 'word24');
 });
 
-test('first answer adds a word to learned collection without separate storage', () => {
+test('exiting after one answer does not mark a word learned', () => {
   const { run, get } = app();
   assert.equal(run('buildPool("learned").length'), 0);
   run('renderLearned()');
   assert.equal(get('#learnedEmptyTitle').textContent, '还没有已学单词');
   run('answer(q.options.findIndex(w => w.word === q.pool[q.idx].word))');
-  assert.equal(run('buildPool("learned")[0].word'), 'apple');
-  assert.equal(run('buildPool("learned").length'), 1);
+  run('backToSetup()');
+  assert.equal(run('buildPool("learned").length'), 0);
+  assert.equal(run('buildPool("new").length'), 2);
+  assert.equal(run('todayStats().completedWords.length'), 0);
+  assert.equal(run('STATS.total.seen'), 1);
 });
 
 test('both review modules honor preset, custom and all counts and reject invalid input', () => {
@@ -229,7 +239,8 @@ test('both review modules honor preset, custom and all counts and reject invalid
     const { run, get } = app();
     run(`
       WORDS = Array.from({ length: 35 }, (_, i) => ({ word: 'word' + i, meaning: '词', phonetic: '' }));
-      WSTATS = Object.fromEntries(WORDS.map(w => [w.word, { seen: 1, right: 1, wrong: 0 }]));
+      WSTATS = Object.fromEntries(WORDS.map(w => [w.word, { completedAt: 100, seen: 1, right: 1, wrong: 0 }]));
+      BYWORD = new Map(WORDS.map(w => [w.word, w]));
       WB = WORDS.map(w => ({ word: w.word }));
       var started = null;
       startQuiz = (...args) => { started = args; };
@@ -302,23 +313,26 @@ test('retrying mistakes retains the original return destination', () => {
   assert.equal(get('#previewBack').textContent, '← 返回已学单词调整');
 });
 
-test('daily word progress deduplicates repeated rounds while answer totals stay accurate', () => {
+test('completion counts unique words only after the full session passes', () => {
   const { run, get } = app();
   run('recordAnswer("Apple", true); recordAnswer("apple", false); recordAnswer("apple", true)');
-  assert.equal(run('todayStats().words.length'), 1);
-  assert.equal(run('todayStats().seen'), 3);
+  assert.equal(run('todayStats().completedWords.length'), 0);
   assert.equal(run('STATS.total.seen'), 3);
-  assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
-  run('recordAnswer("pear", true)');
+  run('recordAnswer("pear", true); q.stage = 2; q.answered = true; recordSessionCompletion()');
   assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
-  run('STATS = normalizeStats(JSON.parse(JSON.stringify(STATS))); updateGoal()');
+  run('recordSessionCompletion(); q.completionRecorded = false; recordSessionCompletion()');
   assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+  run('STATS = normalizeStats(JSON.parse(JSON.stringify(STATS))); WSTATS = normalizeWordStats(WSTATS); updateGoal()');
+  assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+  assert.equal(run('buildPool("learned").length'), 2);
+  run('recordAnswer("apple", false); backToSetup()');
+  assert.equal(run('buildPool("learned").length'), 2);
 });
 
-test('legacy daily answers migrate to unique words from today only', () => {
+test('legacy answers are retained without inventing completion records', () => {
   const { run, get } = app();
   run(`
-    STATS.daily[todayStr()] = { seen: 100, right: 90, wrong: 10 };
+    STATS.daily[todayStr()] = { seen: 100, right: 90, wrong: 10, words: ["apple", "pear"] };
     WSTATS = {
       apple: { seen: 30, lastAt: Date.now() },
       pear: { seen: 20, lastAt: Date.now() },
@@ -326,7 +340,8 @@ test('legacy daily answers migrate to unique words from today only', () => {
     };
     updateGoal();
   `);
-  assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+  assert.equal(get('#goalBadge').textContent, '今日 0/20 词');
+  assert.equal(run('buildPool("learned").length'), 0);
   assert.equal(run('todayStats().seen'), 100);
 });
 
@@ -340,6 +355,7 @@ test('daily refresh resets after midnight and keeps previous days intact', () =>
       static now() { return clockTime; }
     };
     recordAnswer('apple', true);
+    q.words = [WORDS[0]]; q.stage = 2; q.answered = true; recordSessionCompletion();
     var oldDay = todayStr();
     var scheduledCallback, scheduledDelay;
     setTimeout = (callback, delay) => { scheduledCallback = callback; scheduledDelay = delay; return 1; };
@@ -350,8 +366,8 @@ test('daily refresh resets after midnight and keeps previous days intact', () =>
   assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
   run('clockTime += 2000; scheduledCallback()');
   assert.equal(get('#goalBadge').textContent, '今日 0/20 词');
-  assert.equal(run('STATS.daily[oldDay].words.length'), 1);
-  run('recordAnswer("apple", true); refreshDailyDisplay()');
+  assert.equal(run('STATS.daily[oldDay].completedWords.length'), 1);
+  run('recordAnswer("apple", true); q.completionRecorded = false; recordSessionCompletion(); refreshDailyDisplay()');
   assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
   assert.equal(run('STATS.total.seen'), 2);
 });
@@ -395,7 +411,7 @@ test('Tab moves directly between batch inputs, with automatic spelling audio and
 test('graded written answers include pronunciation, meaning and all recorded parts of speech', async () => {
   for (const mode of ['dictation', 'spell']) {
     const { run, get, spoken } = app();
-    run(`q.pool = [{ word: 'test', phonetic: '/test/', meaning: 'n. 测试 v. 检验' }]; q.mode = '${mode}'; renderQuestion()`);
+    run(`q.pool = [{ word: 'test', phonetic: '/test/', meaning: 'n. 测试 v. 检验' }]; q.words = q.pool.slice(); q.mode = '${mode}'; renderQuestion()`);
     get('#writtenInput0').value = mode === 'spell' ? 'test' : 'wrong';
     run('submitWrittenBatch()');
     const feedback = get('#writtenFeedback0').innerHTML;
@@ -409,4 +425,129 @@ test('graded written answers include pronunciation, meaning and all recorded par
   const { run } = app();
   assert.equal(run('answerPartsOfSpeech("自定义释义")'), '词库未标注');
   assert.equal(run('answerPartsOfSpeech("n. 义项一 n. 义项二")'), 'n. 名词');
+});
+
+test('exiting after choice, dictation or an incomplete spelling round never marks completion', () => {
+  for (const exitStage of [0, 1, 2]) {
+    const { run, get } = app();
+    const choose = () => run('answer(q.options.findIndex(w => w.word === q.pool[q.idx].word))');
+    choose(); run('advance()'); choose();
+    if (exitStage >= 1) {
+      run('advance()');
+      for (let i = 0; i < 2; i++) get(`#writtenInput${i}`).value = run(`q.pool[${i}].word`);
+      run('submitWrittenBatch()');
+    }
+    if (exitStage === 2) {
+      run('advance()');
+      get('#writtenInput0').value = run('q.pool[0].word');
+      get('#writtenInput1').value = 'wrong';
+      run('submitWrittenBatch()');
+      assert.equal(run('WB.length'), 1);
+    }
+    run('backToSetup()');
+    assert.equal(run('buildPool("learned").length'), 0);
+    assert.equal(run('buildPool("new").length'), 2);
+    assert.equal(run('todayStats().completedWords.length'), 0);
+    assert.equal(run('STATS.total.seen'), (exitStage + 1) * 2);
+  }
+});
+
+test('favorites support multiple categories, custom categories, editing and cancellation', () => {
+  const { run, get } = app();
+  run('openFavorite("apple")');
+  assert.equal(get('#favoriteDialog').open, true);
+  assert.equal(run('FAVORITES.length'), 0, 'opening the picker does not save');
+  run('closeFavorite()');
+  assert.equal(run('FAVORITES.length'), 0);
+  run(`
+    openFavorite('apple');
+    document.querySelectorAll = selector => selector === '#favoriteCategories input:checked'
+      ? [{ value: '易记混' }, { value: '拼写易错' }] : [];
+  `);
+  get('#favoriteCustom').value = '考试重点，易记混';
+  run('saveFavorite({ preventDefault() {} }); clearTimeout(toastTimer)');
+  assert.equal(run('FAVORITES.length'), 1);
+  assert.equal(run('FAVORITES[0].categories.join(",")'), '易记混,拼写易错,考试重点');
+  assert.equal(get('#favoriteDialog').open, false);
+  run('FAVORITES[0].wrong = 4; openFavorite("apple")');
+  assert.match(get('#favoriteCategories').innerHTML, /value="易记混" checked/);
+  assert.match(get('#favoriteCategories').innerHTML, /value="考试重点" checked/);
+  run('document.querySelectorAll = () => []');
+  get('#favoriteCustom').value = '听音易错';
+  run('saveFavorite({ preventDefault() {} }); clearTimeout(toastTimer)');
+  assert.equal(run('FAVORITES.length'), 1);
+  assert.equal(run('FAVORITES[0].wrong'), 4);
+  assert.equal(run('FAVORITES[0].categories.join(",")'), '听音易错');
+  run('FAVORITES = normalizeWordbook(JSON.parse(JSON.stringify(FAVORITES)))');
+  assert.equal(run('FAVORITES[0].categories[0]'), '听音易错');
+});
+
+test('category filters and review use only matching favorites', () => {
+  const { run, get } = app();
+  run(`
+    FAVORITES = normalizeWordbook([
+      { word: 'apple', categories: ['易记混', '拼写易错'], status: 'learning' },
+      { word: 'pear', categories: ['拼写易错'], status: 'mastered' }
+    ]);
+    var started;
+    startQuiz = (...args) => { started = args; };
+  `);
+  get('#favFilter').value = 'all';
+  get('#favCategory').value = 'cat:易记混';
+  assert.equal(run('filteredWordbook("fav").length'), 1);
+  run('reviewWordbook("fav")');
+  assert.equal(run('started[2]'), 1);
+  assert.equal(run('started[3][0].word'), 'apple');
+  get('#favCategory').value = 'cat:拼写易错';
+  assert.equal(run('filteredWordbook("fav").length'), 2);
+  get('#favFilter').value = 'mastered';
+  assert.equal(run('filteredWordbook("fav")[0].word'), 'pear');
+  get('#favSearch').value = '苹果';
+  assert.equal(run('filteredWordbook("fav").length'), 0);
+  run('FAVORITES = normalizeWordbook([{ word: "apple" }])');
+  get('#favFilter').value = 'all';
+  get('#favSearch').value = '';
+  get('#favCategory').value = 'uncategorized';
+  assert.equal(run('filteredWordbook("fav")[0].word'), 'apple');
+  assert.equal(run('FAVORITES[0].categories.length'), 0);
+});
+
+test('mistakes and favorites are independent when adding, reviewing and removing words', () => {
+  const { run, get } = app();
+  run('recordQuizAnswer(WORDS[0], false)');
+  assert.equal(run('WB.length'), 1);
+  assert.equal(run('FAVORITES.length'), 0);
+  run('openFavorite("pear")');
+  get('#favoriteCustom').value = '易记混';
+  run('saveFavorite({ preventDefault() {} }); clearTimeout(toastTimer)');
+  assert.equal(run('WB.length'), 1);
+  assert.equal(run('buildPool("favorites")[0].word'), 'pear');
+  assert.equal(run('buildPool("wordbook")[0].word'), 'apple');
+  run('recordQuizAnswer(WORDS[1], false)');
+  assert.equal(run('WB.length'), 2);
+  assert.equal(run('FAVORITES.length'), 1);
+  run('removeFromWordbook("pear")');
+  assert.equal(run('FAVORITES.length'), 1);
+  run('addToWordbook(WORDS[1]); removeFromWordbook("pear", "fav")');
+  assert.equal(run('WB.length'), 2);
+  assert.equal(run('FAVORITES.length'), 0);
+});
+
+test('backup migration splits old mixed entries and preserves separate collections on round-trip', () => {
+  const { run } = app();
+  run(`
+    var backup = { version: 5, custom: [], wordbook: [
+      { word: 'apple', wrong: 2 },
+      { word: 'pear', categories: ['易记混'], wrong: 3 },
+      { word: 'banana', wrong: 0 }
+    ], wordstats: {}, stats: {}, settings: {} };
+    var migrated = validateBackup(backup);
+  `);
+  assert.equal(run('migrated.wordbook.map(w => w.word).join(",")'), 'apple,pear');
+  assert.equal(run('migrated.favorites.map(w => w.word).join(",")'), 'pear,banana');
+  assert.equal(run('migrated.favorites[0].categories[0]'), '易记混');
+  run('var restored = validateBackup({ ...migrated, version: 6 })');
+  assert.equal(run('restored.favorites.length'), 2);
+  assert.equal(run('restored.wordbook.length'), 2);
+  assert.throws(() => run('validateBackup({ ...backup, version: 6 })'), /invalid favorites/);
 });

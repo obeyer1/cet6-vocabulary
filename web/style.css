@@ -600,3 +600,9 @@ select, input[type="text"], input[type="number"], input[type="search"], textarea
 .written-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
 .written-prompt label { flex: 1; min-width: 140px; }
 .written-row input { min-width: 0; width: 100%; }
+
+.favorite-categories { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+.favorite-category { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+.favorite-category input { width: auto; }
+.favorite-tags { margin-top: 6px; }
+#view-wordbook .list-filter, #view-favorites .list-filter { flex-wrap: wrap; }

@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="简洁、专注的六级英语词汇学习工具">
 <title>拾词 · 六级词汇训练</title>
-<link rel="stylesheet" href="style.css?v=20261021-answer-details">
+<link rel="stylesheet" href="style.css?v=20261021-separate-favorites">
 </head>
 <body>
 <div class="app">
@@ -17,7 +17,8 @@
     <nav class="tabs" id="tabs" aria-label="主导航">
       <button class="tab active" data-view="study">学习</button>
       <button class="tab" data-view="learned">已学单词</button>
-      <button class="tab" data-view="wordbook">单词本</button>
+      <button class="tab" data-view="wordbook">错题本</button>
+      <button class="tab" data-view="favorites">收藏</button>
       <button class="tab" data-view="glossary">词表</button>
       <button class="tab" data-view="stats">统计</button>
       <button class="tab" data-view="settings">设置</button>
@@ -44,7 +45,7 @@
         <div class="section-heading compact"><span class="step-number">02</span><div><h2>学习范围与数量</h2><p>所选单词都会进行选择、听写和拼写测试。</p></div></div>
         <div class="setup-actions">
           <div class="setup-controls">
-            <div class="field"><label for="quizScope">学习范围</label><select id="quizScope"><option value="due">今日待复习</option><option value="all" selected>全部单词</option><option value="new">未学过的单词</option><option value="learned">已学单词</option><option value="wrong">答错过（生词）</option><option value="wordbook">单词本中的词</option></select></div>
+            <div class="field"><label for="quizScope">学习范围</label><select id="quizScope"><option value="due">今日待复习</option><option value="all" selected>全部单词</option><option value="new">未完成学习的单词</option><option value="learned">已学单词</option><option value="wrong">答错过（生词）</option><option value="wordbook">错题本中的词</option><option value="favorites">收藏中的词</option></select></div>
             <div class="field"><label for="quizCount">题目数量</label><select id="quizCount"><option value="10">10 题</option><option value="20" selected>20 题</option><option value="30">30 题</option><option value="50">50 题</option><option value="custom">自定义…</option></select><input type="number" id="quizCountCustom" class="hidden" min="1" placeholder="自定义题数（至少 1 题）" value="100"></div>
           </div>
           <button type="button" class="btn primary big" id="startQuiz"><span>查看本轮单词表</span><span aria-hidden="true">→</span></button>
@@ -82,7 +83,7 @@
 
     <section id="view-learned" class="view">
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow">LEARNED WORDS</span><h2>已学单词</h2><p>作答过的单词会自动收录。可复习单个单词，也可选择数量，按当前筛选顺序复习。</p></div><div class="head-actions"><span class="muted count-pill" id="learnedCount"></span></div></div>
+        <div class="panel-head"><div><span class="eyebrow">LEARNED WORDS</span><h2>已学单词</h2><p>整组通过选择、听写和拼写三轮测试后，单词会自动收录。可复习单个单词，也可选择数量，按当前筛选顺序复习。</p></div><div class="head-actions"><span class="muted count-pill" id="learnedCount"></span></div></div>
         <div class="review-controls">
           <label for="learnedReviewCount">复习 / 测试单词数</label>
           <select id="learnedReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
@@ -92,23 +93,39 @@
         </div>
         <div class="list-filter"><input type="search" id="learnedSearch" placeholder="搜索单词或释义…" aria-label="搜索已学单词"><select id="learnedFilter" aria-label="筛选已学单词"><option value="all">全部已学</option><option value="due">到期需复习</option><option value="wrong">曾经答错</option></select><select id="learnedSort" aria-label="已学单词排序"><option value="review">待复习优先</option><option value="recent">最近学习优先</option><option value="wrong">错误次数优先</option></select></div>
         <div id="learnedList" class="list"></div>
-        <div id="learnedEmpty" class="empty hidden"><span>○</span><strong id="learnedEmptyTitle">还没有已学单词</strong><p id="learnedEmptyHint">完成一次作答后，单词就会出现在这里。</p></div>
+        <div id="learnedEmpty" class="empty hidden"><span>○</span><strong id="learnedEmptyTitle">还没有已学单词</strong><p id="learnedEmptyHint">完成整组的三轮测试后，单词会出现在这里。</p></div>
       </div>
     </section>
 
     <section id="view-wordbook" class="view">
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow">MY COLLECTION</span><h2>我的单词本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span></div></div>
+        <div class="panel-head"><div><span class="eyebrow">MISTAKE BOOK</span><h2>错题本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span></div></div>
         <div class="review-controls">
           <label for="wbReviewCount">复习 / 测试单词数</label>
           <select id="wbReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
           <input type="number" id="wbReviewCountCustom" class="hidden" min="1" step="1" placeholder="输入单词数" aria-label="自定义复习单词数">
-          <button class="btn primary" id="wbReview">复习单词本</button>
+          <button class="btn primary" id="wbReview">复习当前列表</button>
           <span class="muted">不足所选数量时，复习全部可用单词。</span>
         </div>
-        <div class="list-filter"><input type="search" id="wbSearch" placeholder="搜索单词或释义…" aria-label="搜索单词本"><select id="wbFilter" aria-label="筛选单词本状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select id="wbSort" aria-label="单词本排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
+        <div class="list-filter"><input type="search" id="wbSearch" placeholder="搜索单词或释义…" aria-label="搜索错题本"><select id="wbFilter" aria-label="筛选错题本状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select hidden id="wbCategory" aria-label="筛选收藏栏目"><option value="all">全部栏目</option></select><select id="wbSort" aria-label="错题本排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
         <div id="wbList" class="list"></div>
-        <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>答错的词会自动来到这里，也可以从全部词表中收藏。</p></div>
+        <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>开启自动收集错词后，答错的词会来到这里。收藏独立保存在收藏栏目。</p></div>
+      </div>
+    </section>
+
+    <section id="view-favorites" class="view">
+      <div class="panel">
+        <div class="panel-head"><div><span class="eyebrow">MY COLLECTION</span><h2>我的收藏</h2><p>按栏目整理主动收藏的单词，分类复习。</p></div><div class="head-actions"><span class="muted count-pill" id="favCount"></span></div></div>
+        <div class="review-controls">
+          <label for="favReviewCount">复习 / 测试单词数</label>
+          <select id="favReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
+          <input type="number" id="favReviewCountCustom" class="hidden" min="1" step="1" placeholder="输入单词数" aria-label="自定义复习单词数">
+          <button class="btn primary" id="favReview">复习当前列表</button>
+          <span class="muted">不足所选数量时，复习全部可用单词。</span>
+        </div>
+        <div class="list-filter"><input type="search" id="favSearch" placeholder="搜索单词或释义…" aria-label="搜索收藏"><select id="favFilter" aria-label="筛选收藏状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select id="favCategory" aria-label="筛选收藏栏目"><option value="all">全部栏目</option></select><select id="favSort" aria-label="收藏排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
+        <div id="favList" class="list"></div>
+        <div id="favEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>点击单词旁的收藏按钮，将它加入一个或多个栏目。</p></div>
       </div>
     </section>
 
@@ -128,7 +145,7 @@
     <section id="view-settings" class="view">
       <div class="panel">
         <div class="page-heading"><span class="eyebrow">PREFERENCES</span><h2>设置</h2><p>调整学习习惯，管理你的词库和本地数据。</p></div>
-        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（单词数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入单词本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（单词数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入错题本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><h3>添加自定义单词</h3><p>补充课堂、阅读或工作中遇到的新词。</p></div></div><div class="form-grid"><input type="text" id="addWord" placeholder="单词，如：algorithm" aria-label="自定义英文单词"><input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）" aria-label="自定义单词音标"><input type="text" id="addMeaning" placeholder="释义，如：n. 算法" aria-label="自定义单词释义"></div><button class="btn primary" id="addWordBtn">添加到词库</button></div>
         <div class="settings-section"><div class="settings-title"><span>03</span><div><h3>批量导入词表</h3><p>每行一个：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。</p></div></div><textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试" aria-label="批量导入词表内容"></textarea><div class="row"><button class="btn" id="importBtn">导入词表</button></div></div>
         <div class="settings-section settings-data"><div class="settings-title"><span>04</span><div><h3>数据备份</h3><p>所有记录仅保存在这台设备的浏览器中。</p></div></div><div class="row"><button class="btn" id="exportBtn">导出学习数据</button><label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label></div></div>
@@ -139,6 +156,15 @@
 </div>
 
 <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+<dialog class="word-dialog" id="favoriteDialog" aria-labelledby="favoriteTitle">
+  <form id="favoriteForm">
+    <h2 id="favoriteTitle">收藏单词</h2>
+    <p class="muted">可同时选择多个栏目，也可以不选，保存到未分类。</p>
+    <div id="favoriteCategories" class="favorite-categories"></div>
+    <div class="field"><label for="favoriteCustom">新增栏目（可选）</label><input id="favoriteCustom" placeholder="例如：近义词、考试重点（用逗号分隔）"></div>
+    <div class="dialog-actions"><button type="button" class="btn" id="favoriteCancel">取消</button><button type="submit" class="btn primary">保存收藏</button></div>
+  </form>
+</dialog>
 <dialog class="word-dialog" id="wordDialog" aria-labelledby="wordDialogTitle">
   <form id="wordEditForm">
     <div class="dialog-head"><div><span class="eyebrow">CUSTOM WORD</span><h2 id="wordDialogTitle">编辑自定义单词</h2></div><button class="dialog-close" id="wordDialogClose" type="button" aria-label="关闭">×</button></div>
@@ -149,6 +175,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261021-answer-details"></script>
+<script src="app.js?v=20261021-separate-favorites"></script>
 </body>
 </html>

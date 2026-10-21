@@ -7,11 +7,14 @@
 const LS = {
   custom: "cet6_custom_words",
   wordbook: "cet6_wordbook",
+  favorites: "cet6_favorites",
   wordstats: "cet6_wordstats",
   stats: "cet6_stats",
   settings: "cet6_settings",
 };
-const DATA_VERSION = 3;
+const DATA_VERSION = 6;
+const FAVORITE_CATEGORIES = ["易记混", "拼写易错", "听音易错", "重点复习"];
+let favoriteWord = null;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60];
 const QUIZ_STAGES = ["选择", "听写", "拼写"];
@@ -42,7 +45,8 @@ let WORDS = [];            // 全部单词（内置 + 自定义）
 let BYWORD = new Map();    // word -> entry
 let BUILTIN = [];          // 内置词库
 let CUSTOM = [];           // 自定义单词
-let WB = [];               // 单词本 [{word, addedAt, status, wrong, right, lastAt}]
+let FAVORITES = [];
+let WB = [];               // 错题本 [{word, addedAt, status, wrong, right, lastAt}]
 let WSTATS = {};           // { word: {seen, right, wrong} }
 let STATS = null;          // { total: {seen,right,wrong}, daily: {date: {...}} }
 let SETTINGS = null;       // { dailyGoal, autoAddWrong }
@@ -85,6 +89,56 @@ function normalizeEntry(entry) {
   return { word, phonetic: String(entry.phonetic || "").trim(), meaning };
 }
 
+function normalizeCategories(categories) {
+  if (!Array.isArray(categories)) return [];
+  return [...new Set(categories.filter(value => typeof value === "string").map(value => value.trim().slice(0, 30)).filter(Boolean))].slice(0, 20);
+}
+
+function favoriteButton(entry) {
+  const saved = FAVORITES.some(item => item.word === wordKey(entry.word));
+  return `<button type="button" class="mini-btn" data-favorite="${esc(wordKey(entry.word))}">${saved ? "★ 收藏分类" : "☆ 收藏"}</button>`;
+}
+
+function favoriteCategories() {
+  return [...new Set([...FAVORITE_CATEGORIES, ...FAVORITES.flatMap(item => item.categories || [])])];
+}
+
+function openFavorite(word) {
+  const entry = BYWORD.get(wordKey(word));
+  if (!entry) return;
+  favoriteWord = wordKey(word);
+  const selected = FAVORITES.find(item => item.word === favoriteWord)?.categories || [];
+  $("#favoriteTitle").textContent = `收藏 · ${entry.word}`;
+  $("#favoriteCategories").innerHTML = favoriteCategories().map(category => `<label class="favorite-category"><input type="checkbox" value="${esc(category)}" ${selected.includes(category) ? "checked" : ""}>${esc(category)}</label>`).join("");
+  $("#favoriteCustom").value = "";
+  $("#favoriteDialog").showModal();
+}
+
+function closeFavorite() {
+  favoriteWord = null;
+  $("#favoriteDialog").close();
+}
+
+function saveFavorite(event) {
+  event.preventDefault();
+  const entry = BYWORD.get(favoriteWord);
+  if (!entry) { closeFavorite(); return; }
+  const selected = $$("#favoriteCategories input:checked").map(input => input.value);
+  const custom = $("#favoriteCustom").value.split(/[,，、\n]/);
+  if (!FAVORITES.some(item => item.word === wordKey(entry.word))) FAVORITES.push({ word: wordKey(entry.word), categories: [], status: "learning", addedAt: Date.now(), lastAt: Date.now(), right: 0, wrong: 0 });
+  const item = FAVORITES.find(item => item.word === favoriteWord);
+  item.categories = normalizeCategories([...selected, ...custom]);
+  save(LS.favorites, FAVORITES);
+  closeFavorite();
+  const view = $(".tab.active")?.dataset.view;
+  if (view === "wordbook") renderWordbook();
+  if (view === "favorites") renderWordbook("fav");
+  if (view === "glossary") renderGlossary();
+  if (view === "learned") renderLearned();
+  $$("[data-favorite]").filter(button => button.dataset.favorite === wordKey(entry.word)).forEach(button => { button.textContent = "★ 收藏分类"; });
+  notify(`已收藏 ${entry.word}${item.categories.length ? ` · ${item.categories.join("、")}` : " · 未分类"}`);
+}
+
 function normalizeWordbook(value) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
@@ -97,6 +151,7 @@ function normalizeWordbook(value) {
       word,
       addedAt: nonNegativeInt(item.addedAt) || Date.now(),
       status: item.status === "mastered" ? "mastered" : "learning",
+      categories: normalizeCategories(item.categories),
       wrong: nonNegativeInt(item.wrong),
       right: nonNegativeInt(item.right),
       lastAt: nonNegativeInt(item.lastAt) || Date.now(),
@@ -119,6 +174,7 @@ function normalizeWordStats(value) {
       interval: nonNegativeInt(raw.interval),
       nextReviewAt: nonNegativeInt(raw.nextReviewAt),
       lastAt: nonNegativeInt(raw.lastAt),
+      completedAt: nonNegativeInt(raw.completedAt),
     };
   }
   return result;
@@ -133,6 +189,7 @@ function normalizeStats(value) {
     for (const [date, raw] of Object.entries(value.daily)) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw || typeof raw !== "object") continue;
       result.daily[date] = { seen: nonNegativeInt(raw.seen), right: nonNegativeInt(raw.right), wrong: nonNegativeInt(raw.wrong) };
+      if (Array.isArray(raw.completedWords)) result.daily[date].completedWords = [...new Set(raw.completedWords.filter((word) => typeof word === "string").map(wordKey).filter(Boolean))];
       if (Array.isArray(raw.words)) result.daily[date].words = [...new Set(raw.words.filter((word) => typeof word === "string").map(wordKey).filter(Boolean))];
     }
   }
@@ -165,14 +222,8 @@ function todayStats() {
   const key = todayStr();
   if (!STATS.daily[key]) STATS.daily[key] = { seen: 0, right: 0, wrong: 0, words: [] };
   const daily = STATS.daily[key];
-  // Older backups stored answer counts only. Today's words can be recovered
-  // from each word's latest answer; past daily word sets cannot be reconstructed.
-  if (!Array.isArray(daily.words)) {
-    daily.words = Object.entries(WSTATS)
-      .filter(([, stats]) => stats.seen > 0 && stats.lastAt && dateKey(new Date(stats.lastAt)) === key)
-      .map(([word]) => wordKey(word));
-    save(LS.stats, STATS);
-  }
+  // Legacy answer counts are retained, but cannot prove a full session was completed.
+  if (!Array.isArray(daily.completedWords)) daily.completedWords = [];
   return daily;
 }
 function recordAnswer(word, ok) {
@@ -191,9 +242,12 @@ function recordAnswer(word, ok) {
   }
   STATS.total.seen++; ok ? STATS.total.right++ : STATS.total.wrong++;
   const t = todayStats(); t.seen++; ok ? t.right++ : t.wrong++;
-  if (!t.words.includes(word)) t.words.push(word);
+
   const wb = WB.find((x) => x.word === word);
   if (wb) { wb.right += ok ? 1 : 0; wb.wrong += ok ? 0 : 1; wb.lastAt = Date.now(); }
+  const favorite = FAVORITES.find(item => item.word === word);
+  if (favorite) { favorite.right += ok ? 1 : 0; favorite.wrong += ok ? 0 : 1; favorite.lastAt = Date.now(); }
+  save(LS.favorites, FAVORITES);
   save(LS.wordbook, WB);
   save(LS.wordstats, WSTATS);
   save(LS.stats, STATS);
@@ -204,6 +258,9 @@ function recordAnswer(word, ok) {
 async function init() {
   const storedCustom = load(LS.custom, []);
   WB = normalizeWordbook(load(LS.wordbook, []));
+  const storedFavorites = load(LS.favorites, null);
+  FAVORITES = storedFavorites === null ? WB.filter(item => item.categories.length || !item.wrong).map(item => ({ ...item, categories: item.categories.slice() })) : normalizeWordbook(storedFavorites);
+  if (storedFavorites === null) WB = WB.filter(item => item.wrong > 0);
   WSTATS = normalizeWordStats(load(LS.wordstats, {}));
   STATS = normalizeStats(load(LS.stats, null));
   SETTINGS = normalizeSettings(load(LS.settings, null));
@@ -243,6 +300,7 @@ function showView(name) {
   });
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
   if (name === "wordbook") renderWordbook();
+  if (name === "favorites") renderWordbook("fav");
   if (name === "learned") renderLearned();
   if (name === "glossary") renderGlossary();
   if (name === "stats") renderStats();
@@ -266,11 +324,11 @@ function buildPool(scope) {
       return (sb.wrong - sb.right) - (sa.wrong - sa.right) || sa.nextReviewAt - sb.nextReviewAt;
     });
   }
-  if (scope === "learned") pool = pool.filter((w) => WSTATS[wordKey(w.word)]?.seen > 0);
-  if (scope === "new") pool = pool.filter((w) => !WSTATS[w.word.toLowerCase()] || WSTATS[w.word.toLowerCase()].seen === 0);
+  if (scope === "learned") pool = pool.filter((w) => WSTATS[wordKey(w.word)]?.completedAt > 0);
+  if (scope === "new") pool = pool.filter((w) => !WSTATS[wordKey(w.word)]?.completedAt);
   if (scope === "wrong") pool = pool.filter((w) => { const s = WSTATS[w.word.toLowerCase()]; return s && s.wrong > 0; });
-  if (scope === "wordbook") {
-    const set = new Set(WB.map((x) => x.word.toLowerCase()));
+  if (scope === "wordbook" || scope === "favorites") {
+    const set = new Set((scope === "favorites" ? FAVORITES : WB).map((x) => x.word.toLowerCase()));
     pool = pool.filter((w) => set.has(w.word.toLowerCase()));
   }
   return pool;
@@ -291,14 +349,14 @@ function startQuiz(mode, scope, count, explicitPool, returnContext) {
     scrollY: window.scrollY || 0,
   };
   Object.assign(q, { mode, pool: pool.slice(0, n), idx: 0, correct: 0, wrongList: [], options: [], answered: false });
-  Object.assign(q, { words: q.pool.slice(), choiceMode: mode === "zh2en" ? "zh2en" : "en2zh", stage: 0, retryRound: 0, retryWords: [], attempts: 0 });
+  Object.assign(q, { words: q.pool.slice(), choiceMode: mode === "zh2en" ? "zh2en" : "en2zh", stage: 0, retryRound: 0, retryWords: [], attempts: 0, completionRecorded: false });
   QUIZ_ACTIVE = false;
   showView("study");
   $("#studySetup").classList.add("hidden");
   $("#studySummary").classList.add("hidden");
   $("#studyQuiz").classList.add("hidden");
   $("#studyPreview").classList.remove("hidden");
-  const returnLabel = q.returnContext.view === "learned" ? "已学单词" : q.returnContext.view === "wordbook" ? "单词本" : "学习设置";
+  const returnLabel = q.returnContext.view === "learned" ? "已学单词" : q.returnContext.view === "wordbook" ? "错题本" : q.returnContext.view === "favorites" ? "收藏" : "学习设置";
   $("#previewBack").textContent = `← 返回${returnLabel}调整`;
   $("#quizBack").textContent = `← 返回${returnLabel}`;
   $("#summaryHome").textContent = `返回${returnLabel}`;
@@ -309,6 +367,7 @@ function startQuiz(mode, scope, count, explicitPool, returnContext) {
       <div class="item-main"><div class="item-word">${esc(w.word)}</div>
         <div class="preview-phonetic">${esc(w.phonetic || "")}</div>
         <div class="preview-meaning">${esc(w.meaning)}</div></div>
+      ${favoriteButton(w)}
       <button type="button" class="mini-btn" data-preview-speak="${index}" aria-label="朗读 ${esc(w.word)}">🔊</button>
     </div>`).join("");
   $("#previewList").querySelectorAll("[data-preview-speak]").forEach((button) => {
@@ -590,15 +649,32 @@ function submitWrittenBatch() {
         <button type="button" class="speak-btn" id="writtenAnswerPlay${i}" aria-label="朗读正确答案 ${esc(w.word)}">🔊 播放读音</button></div>
       <div>音标：${esc(w.phonetic || "暂无音标")}</div>
       <div>词性：${esc(answerPartsOfSpeech(w.meaning))}</div>
-      <div>释义：${esc(w.meaning)}</div>`;
+      <div>释义：${esc(w.meaning)}</div>
+      ${favoriteButton(w)}`;
     $(`#writtenAnswerPlay${i}`).onclick = () => speakWord(w.word);
   });
+  recordSessionCompletion();
   $("#writtenSubmit").disabled = true;
   $("#quizProgressText").textContent = `已批改 ${q.pool.length} 题 · 对 ${correct} · 错 ${q.pool.length - correct}`;
   const next = $("#quizNext");
   next.textContent = q.retryWords.length ? "补测错词 →" : q.stage < QUIZ_STAGES.length - 1 ? "进入拼写测试 →" : "查看结果 🎉";
   next.classList.remove("hidden");
   next.onclick = advance;
+}
+
+function recordSessionCompletion() {
+  if (q.completionRecorded || q.stage !== QUIZ_STAGES.length - 1 || !q.answered || q.retryWords.length) return;
+  const completedAt = Date.now();
+  const daily = todayStats();
+  for (const entry of q.words) {
+    const key = wordKey(entry.word);
+    WSTATS[key].completedAt = completedAt;
+    if (!daily.completedWords.includes(key)) daily.completedWords.push(key);
+  }
+  q.completionRecorded = true;
+  save(LS.wordstats, WSTATS);
+  save(LS.stats, STATS);
+  updateGoal();
 }
 
 function answerPartsOfSpeech(meaning) {
@@ -653,6 +729,7 @@ function answerFeedback(w, ok, chosen) {
       });
     }
   }
+  fb.insertAdjacentHTML("beforeend", favoriteButton(w));
   fb.querySelector("[data-speak]")?.addEventListener("click", () => speakWord(w.word));
   const nextBtn = $("#quizNext");
   if (q.mode === "card") {
@@ -717,7 +794,7 @@ function finishQuiz() {
     const chips = q.wrongList.map((w) => auto
       ? `<span class="chip">${esc(w.word)}<button title="移除" data-rm="${esc(w.word.toLowerCase())}">✕</button></span>`
       : `<span class="chip">${esc(w.word)}</span>`).join("");
-    box.innerHTML = `<h4>本次曾答错 ${q.wrongList.length} 个，现已补测通过${auto ? "（已加入单词本）" : ""}：</h4>` + chips;
+    box.innerHTML = `<h4>本次曾答错 ${q.wrongList.length} 个，现已补测通过${auto ? "（已加入错题本）" : ""}：</h4>` + chips;
     if (auto) {
       box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.rm); b.parentElement.remove(); }));
     }
@@ -748,32 +825,35 @@ function returnToSource() {
   window.scrollTo({ top: context.scrollY, behavior: "instant" });
 }
 
-/* ---------- 单词本 ---------- */
+/* ---------- 错题本 ---------- */
 function addToWordbook(entry) {
   const key = wordKey(entry.word);
   if (WB.some((x) => x.word === key)) return false;
-  WB.push({ word: key, addedAt: Date.now(), status: "learning", wrong: 0, right: 0, lastAt: Date.now() });
+  WB.push({ word: key, categories: [], addedAt: Date.now(), status: "learning", wrong: 0, right: 0, lastAt: Date.now() });
   save(LS.wordbook, WB);
   return true;
 }
-function removeFromWordbook(word) {
+function removeFromWordbook(word, prefix = "wb") {
+  if (prefix === "fav") { FAVORITES = FAVORITES.filter(item => item.word !== wordKey(word)); save(LS.favorites, FAVORITES); return; }
   const key = wordKey(word);
   WB = WB.filter((x) => x.word !== key);
   save(LS.wordbook, WB);
 }
-function setWbStatus(word, status) {
-  const x = WB.find((e) => e.word === word);
+function setWbStatus(word, status, prefix = "wb") {
+  const x = (prefix === "fav" ? FAVORITES : WB).find((e) => e.word === word);
   if (x) x.status = status;
-  save(LS.wordbook, WB);
+  save(prefix === "fav" ? LS.favorites : LS.wordbook, prefix === "fav" ? FAVORITES : WB);
 }
 
-function renderWordbook() {
-  $("#wbCount").textContent = `${WB.length} 个单词`;
-  const kw = $("#wbSearch").value.trim().toLowerCase();
-  const flt = $("#wbFilter").value;
-  const sort = $("#wbSort").value;
-  let list = WB.slice();
-  if (flt !== "all") list = list.filter((x) => x.status === flt);
+function filteredWordbook(prefix = "wb") {
+  const kw = $(`#${prefix}Search`).value.trim().toLowerCase();
+  const flt = $(`#${prefix}Filter`).value;
+  const sort = $(`#${prefix}Sort`).value;
+  let list = (prefix === "fav" ? FAVORITES : WB).slice();
+  const category = $(`#${prefix}Category`).value;
+  if (prefix === "fav" && category === "uncategorized") list = list.filter(item => !item.categories?.length);
+  else if (prefix === "fav" && category && category !== "all") list = list.filter(item => item.categories?.includes(category.slice(4)));
+  if (flt && flt !== "all") list = list.filter((x) => x.status === flt);
   if (kw) {
     list = list.filter((x) => {
       const e = BYWORD.get(x.word);
@@ -788,8 +868,19 @@ function renderWordbook() {
     const bs = WSTATS[b.word] || {};
     return (as.nextReviewAt || 0) - (bs.nextReviewAt || 0) || b.wrong - a.wrong;
   });
-  const box = $("#wbList");
-  const empty = $("#wbEmpty");
+  return list;
+}
+
+function renderWordbook(prefix = "wb") {
+  const category = $(`#${prefix}Category`).value || "all";
+  $(`#${prefix}Category`).innerHTML = '<option value="all">全部栏目</option><option value="uncategorized">未分类</option>' + favoriteCategories().map(name => `<option value="cat:${esc(name)}">${esc(name)}</option>`).join("");
+  $(`#${prefix}Category`).value = category;
+  if (!$(`#${prefix}Category`).value) $(`#${prefix}Category`).value = "all";
+  const list = filteredWordbook(prefix);
+  $(`#${prefix}Count`).textContent = `共 ${(prefix === "fav" ? FAVORITES : WB).length} 个 · 当前 ${list.length} 个`;
+  $(`#${prefix}Review`).disabled = !list.length;
+  const box = $(`#${prefix}List`);
+  const empty = $(`#${prefix}Empty`);
   if (!list.length) {
     box.innerHTML = "";
     empty.classList.remove("hidden");
@@ -803,18 +894,20 @@ function renderWordbook() {
       <div class="item-main">
         <div><span class="item-word">${esc(e.word)}</span>${e.phonetic ? `<span class="item-phonetic">${esc(e.phonetic)}</span>` : ""}</div>
         <div class="item-meaning">${esc(e.meaning)}</div>
+        <div class="favorite-tags ${prefix === "fav" ? "" : "hidden"}">${(x.categories || []).map(category => `<span class="badge">${esc(category)}</span>`).join("") || '<span class="muted">未分类</span>'}</div>
         <div class="muted">错 ${x.wrong} · 对 ${x.right} · ${esc(reviewLabel(WSTATS[x.word]))}</div>
       </div>
       <div class="item-actions">
         ${badge}
+        ${favoriteButton(e)}
         <button class="mini-btn" data-speak="${esc(e.word)}" aria-label="朗读 ${esc(e.word)}">🔊</button>
         <button class="mini-btn" data-wb-toggle="${esc(x.word)}" data-wb-cur="${x.status}">${x.status === "mastered" ? "转学习中" : "标为掌握"}</button>
         <button class="mini-btn danger" data-wb-rm="${esc(x.word)}">移除</button>
       </div>
     </div>`;
   }).join("");
-  box.querySelectorAll("[data-wb-toggle]").forEach((b) => (b.onclick = () => { setWbStatus(b.dataset.wbToggle, b.dataset.wbCur === "mastered" ? "learning" : "mastered"); renderWordbook(); }));
-  box.querySelectorAll("[data-wb-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.wbRm); renderWordbook(); }));
+  box.querySelectorAll("[data-wb-toggle]").forEach((b) => (b.onclick = () => { setWbStatus(b.dataset.wbToggle, b.dataset.wbCur === "mastered" ? "learning" : "mastered", prefix); renderWordbook(prefix); }));
+  box.querySelectorAll("[data-wb-rm]").forEach((b) => (b.onclick = () => { removeFromWordbook(b.dataset.wbRm, prefix); renderWordbook(prefix); }));
   box.querySelectorAll("[data-speak]").forEach((b) => (b.onclick = () => speakWord(b.dataset.speak)));
 }
 
@@ -877,11 +970,11 @@ function bindReviewCount(prefix) {
   };
 }
 
-function reviewWordbook() {
-  const available = buildPool("wordbook").length;
-  const count = resolveReviewCount("wb", available);
+function reviewWordbook(prefix = "wb") {
+  const list = filteredWordbook(prefix).map(item => BYWORD.get(item.word)).filter(Boolean);
+  const count = resolveReviewCount(prefix, list.length);
   if (count == null) return;
-  startQuiz("en2zh", "wordbook", count);
+  startQuiz("en2zh", prefix === "fav" ? "favorites" : "wordbook", count, list.slice(0, count));
 }
 
 function renderLearned() {
@@ -891,7 +984,7 @@ function renderLearned() {
   $("#learnedReview").disabled = list.length === 0;
   $("#learnedEmpty").classList.toggle("hidden", list.length > 0);
   $("#learnedEmptyTitle").textContent = total ? "没有符合条件的单词" : "还没有已学单词";
-  $("#learnedEmptyHint").textContent = total ? "试试其他关键词或筛选条件。" : "完成一次作答后，单词就会出现在这里。";
+  $("#learnedEmptyHint").textContent = total ? "试试其他关键词或筛选条件。" : "完成整组的三轮测试后，单词会出现在这里。";
   const box = $("#learnedList");
   box.innerHTML = list.slice(0, learnedShown).map((entry) => {
     const stats = WSTATS[wordKey(entry.word)];
@@ -904,6 +997,7 @@ function renderLearned() {
         <div class="muted">最近学习：${esc(lastAt)}</div>
       </div>
       <div class="item-actions">
+        ${favoriteButton(entry)}
         <button class="mini-btn" data-learned-speak="${esc(entry.word)}" aria-label="朗读 ${esc(entry.word)}">🔊</button>
         <button class="mini-btn" data-learned-review="${esc(wordKey(entry.word))}">复习此词</button>
       </div>
@@ -939,12 +1033,9 @@ function renderGlossary() {
   const customSet = new Set(CUSTOM.map((w) => w.word.toLowerCase()));
   box.innerHTML = head.map((w) => {
     const key = w.word.toLowerCase();
-    const inWb = WB.some((x) => x.word === key);
     const isCustom = customSet.has(key);
     const custom = isCustom ? `<span class="badge new">自定义</span>` : "";
-    const addBtn = inWb
-      ? `<button class="mini-btn added" disabled>✓ 已收藏</button>`
-      : `<button class="mini-btn" data-gl-add="${esc(w.word)}">+ 收藏</button>`;
+    const addBtn = favoriteButton(w);
     return `<div class="item">
       <div class="item-main">
         <div><span class="item-word">${esc(w.word)}</span>${w.phonetic ? `<span class="item-phonetic">${esc(w.phonetic)}</span>` : ""} ${custom}</div>
@@ -961,7 +1052,6 @@ function renderGlossary() {
     box.insertAdjacentHTML("beforeend", `<button class="btn small" id="glMore">显示更多（还剩 ${list.length - glShown} 个）</button>`);
     $("#glMore").onclick = () => { glShown += 200; renderGlossary(); };
   }
-  box.querySelectorAll("[data-gl-add]").forEach((b) => (b.onclick = () => { const e = BYWORD.get(wordKey(b.dataset.glAdd)); if (e) { addToWordbook(e); renderGlossary(); } }));
   box.querySelectorAll("[data-speak]").forEach((b) => (b.onclick = () => speakWord(b.dataset.speak)));
   box.querySelectorAll("[data-custom-edit]").forEach((b) => (b.onclick = () => editCustomWord(b.dataset.customEdit)));
   box.querySelectorAll("[data-custom-rm]").forEach((b) => (b.onclick = () => deleteCustomWord(b.dataset.customRm)));
@@ -969,18 +1059,18 @@ function renderGlossary() {
 
 /* ---------- 统计 ---------- */
 function renderStats() {
-  const uniqueSeen = Object.values(WSTATS).filter((item) => item.seen > 0).length;
+  const uniqueSeen = Object.values(WSTATS).filter((item) => item.completedAt > 0).length;
   const total = STATS.total;
   const acc = total.right + total.wrong > 0 ? Math.round((total.right / (total.right + total.wrong)) * 100) : 0;
   const mastered = WB.filter((x) => x.status === "mastered").length;
   const due = buildPool("due").length;
-  const today = todayStats().words.length;
+  const today = todayStats().completedWords.length;
   $("#statGrid").innerHTML = `
     <div class="stat-card"><div class="num">${uniqueSeen}</div><div class="lbl">累计学过单词</div></div>
     <div class="stat-card"><div class="num">${today}</div><div class="lbl">今日已学</div></div>
     <div class="stat-card"><div class="num">${acc}%</div><div class="lbl">总正确率</div></div>
     <div class="stat-card"><div class="num">${due}</div><div class="lbl">今日待复习</div></div>
-    <div class="stat-card"><div class="num">${WB.length}</div><div class="lbl">单词本 / 已掌握 ${mastered}</div></div>`;
+    <div class="stat-card"><div class="num">${WB.length}</div><div class="lbl">错题本 / 已掌握 ${mastered}</div></div>`;
   const days = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
@@ -1005,7 +1095,7 @@ function renderSettings() {
 /* ---------- 目标徽章 ---------- */
 function renderGoal() { updateGoal(); }
 function updateGoal() {
-  const t = todayStats().words.length;
+  const t = todayStats().completedWords.length;
   const g = SETTINGS.dailyGoal;
   const badge = $("#goalBadge");
   badge.textContent = `今日 ${t}/${g} 词`;
@@ -1043,6 +1133,7 @@ function setupDailyRefresh() {
 
 /* ---------- 持久化 ---------- */
 function persist() {
+  save(LS.favorites, FAVORITES);
   save(LS.custom, CUSTOM);
   save(LS.wordbook, WB);
   save(LS.wordstats, WSTATS);
@@ -1062,6 +1153,14 @@ function resolveQuizCount() {
 
 /* ---------- 事件绑定 ---------- */
 function bindEvents() {
+  document.addEventListener("click", event => {
+    const button = event.target.closest("[data-favorite]");
+    if (button) openFavorite(button.dataset.favorite);
+  });
+  $("#favoriteForm").onsubmit = saveFavorite;
+  $("#favoriteCancel").onclick = closeFavorite;
+  $("#favoriteDialog").addEventListener("cancel", () => { favoriteWord = null; });
+
   $$(".tab").forEach((t) => (t.onclick = () => showView(t.dataset.view)));
 
   // 学习
@@ -1102,12 +1201,17 @@ function bindEvents() {
   $("#learnedReview").onclick = reviewLearned;
   bindReviewCount("learned");
 
-  // 单词本
-  $("#wbSearch").oninput = renderWordbook;
-  $("#wbFilter").onchange = renderWordbook;
-  $("#wbSort").onchange = renderWordbook;
-  $("#wbReview").onclick = reviewWordbook;
+  // 错题本
+  $("#wbSearch").oninput = () => renderWordbook();
+  $("#wbFilter").onchange = () => renderWordbook();
+  $("#wbCategory").onchange = () => renderWordbook();
+  $("#wbSort").onchange = () => renderWordbook();
+  $("#wbReview").onclick = () => reviewWordbook();
   bindReviewCount("wb");
+  $("#favSearch").oninput = () => renderWordbook("fav");
+  ["Filter", "Category", "Sort"].forEach(suffix => { $(`#fav${suffix}`).onchange = () => renderWordbook("fav"); });
+  $("#favReview").onclick = () => reviewWordbook("fav");
+  bindReviewCount("fav");
 
   // 词表
   $("#glSearch").oninput = () => { glShown = 200; renderGlossary(); };
@@ -1137,6 +1241,7 @@ function bindEvents() {
 
   // 键盘
   document.addEventListener("keydown", (e) => {
+    if ($("#favoriteDialog").open) return;
     if (!QUIZ_ACTIVE || !$("#view-study").classList.contains("active") || $("#studyQuiz").classList.contains("hidden")) return;
     if (q.mode === "card" || isWrittenMode()) return;
     const typingInSpell = isWrittenMode() && e.target && e.target.id === "spellInput";
@@ -1223,7 +1328,7 @@ function saveCustomWordEdit(event) {
   }
   CUSTOM[index] = entry;
   if (newKey !== key) {
-    WB.forEach((item) => { if (item.word === key) item.word = newKey; });
+    [...WB, ...FAVORITES].forEach((item) => { if (item.word === key) item.word = newKey; });
     if (WSTATS[key]) { WSTATS[newKey] = WSTATS[key]; delete WSTATS[key]; }
   }
   rebuildWords();
@@ -1239,6 +1344,7 @@ function deleteCustomWord(rawKey) {
   if (!entry || !confirm(`确定删除自定义单词“${entry.word}”？相关学习记录也会删除。`)) return;
   CUSTOM = CUSTOM.filter((item) => wordKey(item.word) !== key);
   WB = WB.filter((item) => item.word !== key);
+  FAVORITES = FAVORITES.filter((item) => item.word !== key);
   delete WSTATS[key];
   rebuildWords();
   persist();
@@ -1268,6 +1374,7 @@ function exportData() {
     exportedAt: new Date().toISOString(),
     custom: CUSTOM,
     wordbook: WB,
+    favorites: FAVORITES,
     wordstats: WSTATS,
     stats: STATS,
     settings: SETTINGS,
@@ -1291,6 +1398,7 @@ function importData(e) {
       CUSTOM = imported.custom;
       rebuildWords();
       const validWords = new Set(WORDS.map((entry) => wordKey(entry.word)));
+      FAVORITES = imported.favorites.filter(item => validWords.has(item.word));
       WB = imported.wordbook.filter((item) => validWords.has(item.word));
       WSTATS = Object.fromEntries(Object.entries(imported.wordstats).filter(([word]) => validWords.has(word)));
       STATS = imported.stats;
@@ -1315,6 +1423,7 @@ function validateBackup(data) {
   if (!data.stats || typeof data.stats !== "object" || Array.isArray(data.stats)) throw new Error("invalid stats");
   if (!data.settings || typeof data.settings !== "object" || Array.isArray(data.settings)) throw new Error("invalid settings");
 
+  if (data.version >= 6 && !Array.isArray(data.favorites)) throw new Error("invalid favorites");
   const builtinKeys = new Set(BUILTIN.map((entry) => wordKey(entry.word)));
   const customKeys = new Set();
   const custom = data.custom.flatMap((raw) => {
@@ -1326,7 +1435,8 @@ function validateBackup(data) {
   });
   return {
     custom,
-    wordbook: normalizeWordbook(data.wordbook),
+    wordbook: normalizeWordbook(data.wordbook).filter(item => data.version >= 6 || item.wrong > 0),
+    favorites: data.version >= 6 ? normalizeWordbook(data.favorites) : normalizeWordbook(data.wordbook).filter(item => item.categories.length || !item.wrong),
     wordstats: normalizeWordStats(data.wordstats),
     stats: normalizeStats(data.stats),
     settings: normalizeSettings(data.settings),
