@@ -65,57 +65,62 @@ function app({ audioError = null } = {}) {
   return { run, get, spoken, recordings, synthesized };
 }
 
-test('choice → dictation with repeated wrong-word retries → spelling → summary', () => {
+test('whole-batch dictation and spelling grade once and retry only mistakes', async () => {
   const { run, get, spoken } = app();
   const choose = () => run('answer(q.options.findIndex(w => w.word === q.pool[q.idx].word))');
-  const write = (correct) => {
-    get('#spellInput').value = correct ? run('q.pool[q.idx].word.toUpperCase()') : 'wrong';
-    run('submitSpell()');
+  const fill = (wrongIndex = -1) => {
+    for (let i = 0; i < run('q.pool.length'); i++) {
+      get(`#writtenInput${i}`).value = i === wrongIndex ? 'wrong' : run(`q.pool[${i}].word.toUpperCase()`);
+    }
   };
-  choose(); run('advance()'); choose();
-  assert.equal(get('#quizNext').textContent, '进入听写测试 →');
-  run('advance()');
+  choose(); run('advance()'); choose(); run('advance()');
   assert.equal(run('q.mode'), 'dictation');
   assert.equal(run('q.pool.length'), 2);
-  assert.equal(get('#quizWord').textContent, '听读音，写单词');
-  assert.equal(get('#quizPhonetic').textContent, '');
+  assert.equal(spoken.length, 0, 'no overlapping automatic playback');
   assert.equal(get('#quizMeaning').textContent, '');
   assert.equal(get('#quizFeedback').innerHTML, '');
-  assert.ok(!get('#quizOptions').innerHTML.includes('spellHint'));
-  assert.equal(spoken.at(-1), run('q.pool[0].word'));
-  get('#quizSpeak').onclick();
-  assert.equal(spoken.length, 2);
-  write(false);
-  assert.ok(get('#quizFeedback').innerHTML.includes('你输入的是「wrong」'));
-  assert.ok(!get('#quizFeedback').innerHTML.includes(run('q.pool[q.idx].meaning')));
-  run('submitSpell()');
-  assert.equal(run('q.attempts'), 3, 'double submission is ignored');
-  run('advance()');
-  assert.equal(get('#quizFeedback').innerHTML, '');
-  write(true);
-  assert.ok(!get('#quizFeedback').innerHTML.includes(run('q.pool[q.idx].meaning')));
-  assert.equal(get('#quizNext').textContent, '继续补测错词 →');
+  assert.ok(!get('#quizOptions').innerHTML.includes('苹果'));
+  assert.ok(!get('#quizOptions').innerHTML.includes('writtenHint'));
+  assert.ok(get('#quizOptions').innerHTML.includes('writtenInput1'));
+  await get('#writtenPlay1').onclick();
+  assert.equal(spoken[0], run('q.pool[1].word'));
+  get('#writtenInput0').value = 'APPLE';
+  get('#writtenInput1').value = '';
+  run('submitWrittenBatch()');
+  assert.equal(run('q.attempts'), 2, 'missing answers do not record any grades');
+  assert.equal(run('q.answered'), false);
+  run('clearTimeout(toastTimer)');
+  fill(0);
+  run('updateWrittenProgress()');
+  assert.equal(get('#quizProgressText').textContent, '已填写 2 / 2 题');
+  assert.equal(run('q.attempts'), 2, 'typing does not grade');
+  run('submitWrittenBatch()');
+  assert.equal(run('q.attempts'), 4);
+  assert.equal(get('#writtenInput0').disabled, true);
+  assert.match(get('#writtenFeedback0').innerHTML, /错误/);
+  assert.match(get('#writtenFeedback1').innerHTML, /正确/);
+  assert.ok(!get('#writtenFeedback0').innerHTML.includes(run('q.pool[0].meaning')));
+  run('submitWrittenBatch()');
+  assert.equal(run('q.attempts'), 4, 'double submit ignored');
   run('advance()');
   assert.equal(run('q.pool.length'), 1);
   assert.equal(run('q.mode'), 'dictation');
-  write(false); run('advance()');
+  fill(0); run('submitWrittenBatch(); advance()');
   assert.equal(run('q.retryRound'), 2);
-  write(true);
-  assert.equal(get('#quizNext').textContent, '进入拼写测试 →');
-  run('advance()');
+  fill(); run('submitWrittenBatch(); advance()');
   assert.equal(run('q.mode'), 'spell');
   assert.equal(run('q.pool.length'), 2);
-  assert.equal(run('q.retryRound'), 0);
-  assert.equal(get('#quizWord').textContent, run('q.pool[0].meaning'));
-  assert.ok(get('#quizOptions').innerHTML.includes('spellHint'));
-  write(true); run('advance()'); write(true); run('advance()');
+  assert.ok(get('#quizOptions').innerHTML.includes('苹果'));
+  assert.ok(get('#quizOptions').innerHTML.includes('writtenHint1'));
+  fill(1); run('submitWrittenBatch(); advance()');
+  assert.equal(run('q.mode'), 'spell');
+  assert.equal(run('q.pool.length'), 1);
+  fill(); run('submitWrittenBatch(); advance()');
   assert.equal(run('QUIZ_ACTIVE'), false);
   assert.match(get('#summaryTitle').textContent, /三轮全部通过/);
-  assert.equal(run('STATS.total.seen'), 8);
-  assert.equal(run('STATS.total.wrong'), 2);
-  assert.equal(run('WB.length'), 1);
+  assert.equal(run('STATS.total.seen'), 9);
+  assert.equal(run('STATS.total.wrong'), 3);
 });
-
 
 test('dictionary audio encodes words and stops playback on exit', async () => {
   const { run, recordings, synthesized } = app();
@@ -294,4 +299,58 @@ test('retrying mistakes retains the original return destination', () => {
   assert.equal(run('q.returnContext.view'), 'learned');
   assert.equal(run('q.returnContext.scrollY'), 150);
   assert.equal(get('#previewBack').textContent, '← 返回已学单词调整');
+});
+
+test('daily word progress deduplicates repeated rounds while answer totals stay accurate', () => {
+  const { run, get } = app();
+  run('recordAnswer("Apple", true); recordAnswer("apple", false); recordAnswer("apple", true)');
+  assert.equal(run('todayStats().words.length'), 1);
+  assert.equal(run('todayStats().seen'), 3);
+  assert.equal(run('STATS.total.seen'), 3);
+  assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
+  run('recordAnswer("pear", true)');
+  assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+  run('STATS = normalizeStats(JSON.parse(JSON.stringify(STATS))); updateGoal()');
+  assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+});
+
+test('legacy daily answers migrate to unique words from today only', () => {
+  const { run, get } = app();
+  run(`
+    STATS.daily[todayStr()] = { seen: 100, right: 90, wrong: 10 };
+    WSTATS = {
+      apple: { seen: 30, lastAt: Date.now() },
+      pear: { seen: 20, lastAt: Date.now() },
+      old: { seen: 50, lastAt: Date.now() - 2 * DAY_MS }
+    };
+    updateGoal();
+  `);
+  assert.equal(get('#goalBadge').textContent, '今日 2/20 词');
+  assert.equal(run('todayStats().seen'), 100);
+});
+
+test('daily refresh resets after midnight and keeps previous days intact', () => {
+  const { run, get } = app();
+  run(`
+    var RealDate = Date;
+    var clockTime = new RealDate(2026, 9, 21, 23, 59, 59).getTime();
+    Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [clockTime])); }
+      static now() { return clockTime; }
+    };
+    recordAnswer('apple', true);
+    var oldDay = todayStr();
+    var scheduledCallback, scheduledDelay;
+    setTimeout = (callback, delay) => { scheduledCallback = callback; scheduledDelay = delay; return 1; };
+    clearTimeout = () => {};
+    scheduleDailyRefresh();
+  `);
+  assert.equal(run('scheduledDelay'), 1100);
+  assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
+  run('clockTime += 2000; scheduledCallback()');
+  assert.equal(get('#goalBadge').textContent, '今日 0/20 词');
+  assert.equal(run('STATS.daily[oldDay].words.length'), 1);
+  run('recordAnswer("apple", true); refreshDailyDisplay()');
+  assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
+  assert.equal(run('STATS.total.seen'), 2);
 });

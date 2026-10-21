@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="简洁、专注的六级英语词汇学习工具">
 <title>拾词 · 六级词汇训练</title>
-<link rel="stylesheet" href="style.css?v=20261019-preview-back-top">
+<link rel="stylesheet" href="style.css?v=20261021-daily-count">
 </head>
 <body>
 <div class="app">
@@ -22,7 +22,7 @@
       <button class="tab" data-view="stats">统计</button>
       <button class="tab" data-view="settings">设置</button>
     </nav>
-    <div class="goal" id="goalBadge" title="今日学习进度" aria-live="polite"></div>
+    <div class="goal" id="goalBadge" title="今日已学单词（同一单词只计一次）" aria-live="polite"></div>
   </header>
 
   <main>
@@ -128,7 +128,7 @@
     <section id="view-settings" class="view">
       <div class="panel">
         <div class="page-heading"><span class="eyebrow">PREFERENCES</span><h2>设置</h2><p>调整学习习惯，管理你的词库和本地数据。</p></div>
-        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（题数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入单词本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（单词数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入单词本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><h3>添加自定义单词</h3><p>补充课堂、阅读或工作中遇到的新词。</p></div></div><div class="form-grid"><input type="text" id="addWord" placeholder="单词，如：algorithm" aria-label="自定义英文单词"><input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）" aria-label="自定义单词音标"><input type="text" id="addMeaning" placeholder="释义，如：n. 算法" aria-label="自定义单词释义"></div><button class="btn primary" id="addWordBtn">添加到词库</button></div>
         <div class="settings-section"><div class="settings-title"><span>03</span><div><h3>批量导入词表</h3><p>每行一个：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。</p></div></div><textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试" aria-label="批量导入词表内容"></textarea><div class="row"><button class="btn" id="importBtn">导入词表</button></div></div>
         <div class="settings-section settings-data"><div class="settings-title"><span>04</span><div><h3>数据备份</h3><p>所有记录仅保存在这台设备的浏览器中。</p></div></div><div class="row"><button class="btn" id="exportBtn">导出学习数据</button><label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label></div></div>
@@ -149,6 +149,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261019-return-source"></script>
+<script src="app.js?v=20261021-daily-count"></script>
 </body>
 </html>

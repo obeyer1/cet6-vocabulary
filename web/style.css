@@ -594,3 +594,9 @@ select, input[type="text"], input[type="number"], input[type="search"], textarea
 .review-controls .muted { flex-basis: 100%; }
 
 .preview-nav { margin-bottom: 16px; }
+
+.written-batch { grid-column: 1 / -1; display: grid; gap: 18px; min-width: 0; }
+.written-row { padding: 16px; border: 1px solid var(--line); border-radius: 6px; }
+.written-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+.written-prompt label { flex: 1; min-width: 140px; }
+.written-row input { min-width: 0; width: 100%; }
