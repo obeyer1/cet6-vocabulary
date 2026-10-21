@@ -514,10 +514,11 @@ function renderWrittenBatch() {
   $("#quizPhonetic").textContent = "";
   $("#quizMeaning").textContent = "";
   $("#quizOptions").innerHTML = `<div class="written-batch">
-    <p class="muted">${dictation ? "逐个点击播放读音，填写对应单词。" : "根据每题释义填写英文单词。"}全部填完后统一提交。</p>
+    <p class="muted">${dictation ? "逐个点击播放读音，填写对应单词。" : "根据每题释义填写英文单词，聚焦输入框时自动播放读音。"}按 Tab 跳到下一词，Shift + Tab 返回上一词；全部填完后统一提交。</p>
     ${q.pool.map((w, i) => `<div class="written-row">
       <div class="written-prompt"><label for="writtenInput${i}">第 ${i + 1} 题${dictation ? "" : ` · ${esc(w.meaning)}`}</label>
-        ${dictation ? `<button type="button" class="btn small" id="writtenPlay${i}" aria-label="播放第 ${i + 1} 题读音">🔊 播放读音</button>` : `<button type="button" class="btn ghost small" id="writtenHint${i}">音标提示</button><span id="writtenPhonetic${i}" class="muted"></span>`}
+        <button type="button" class="btn small" id="writtenPlay${i}" aria-label="播放第 ${i + 1} 题读音">🔊 播放读音</button>
+        ${dictation ? "" : `<button type="button" class="btn ghost small" id="writtenHint${i}">音标提示</button><span id="writtenPhonetic${i}" class="muted"></span>`}
       </div>
       <div class="spell-box"><input type="text" id="writtenInput${i}" placeholder="输入英文单词…" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
       <div id="writtenFeedback${i}" class="feedback hidden" aria-live="polite"></div>
@@ -528,15 +529,30 @@ function renderWrittenBatch() {
     const input = $(`#writtenInput${i}`);
     input.oninput = updateWrittenProgress;
     input.onkeydown = (event) => {
-      if (event.key === "Enter") {
+      if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
+      if (event.key === "Tab" && event.shiftKey) {
+        if (i > 0) {
+          event.preventDefault();
+          $(`#writtenInput${i - 1}`).focus();
+        }
+      } else if (event.key === "Tab" || event.key === "Enter") {
         event.preventDefault();
         (i + 1 < q.pool.length ? $(`#writtenInput${i + 1}`) : $("#writtenSubmit")).focus();
       }
     };
-    if (dictation) $( `#writtenPlay${i}`).onclick = () => speakWord(w.word);
-    else $(`#writtenHint${i}`).onclick = () => { $(`#writtenPhonetic${i}`).textContent = w.phonetic || "（暂无音标）"; };
+    input.onfocus = () => {
+      if (!dictation && QUIZ_ACTIVE && !q.answered) speakWord(w.word);
+    };
+    $(`#writtenPlay${i}`).onclick = () => speakWord(w.word);
+    if (!dictation) $(`#writtenHint${i}`).onclick = () => { $(`#writtenPhonetic${i}`).textContent = w.phonetic || "（暂无音标）"; };
   });
   $("#writtenSubmit").onclick = submitWrittenBatch;
+  $("#writtenSubmit").onkeydown = (event) => {
+    if (event.key === "Tab" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !q.answered) {
+      event.preventDefault();
+      $(`#writtenInput${q.pool.length - 1}`).focus();
+    }
+  };
   updateWrittenProgress();
   $("#writtenInput0").focus();
 }
@@ -569,7 +585,13 @@ function submitWrittenBatch() {
     input.classList.add(ok ? "correct" : "wrong");
     const feedback = $(`#writtenFeedback${i}`);
     feedback.className = `feedback ${ok ? "ok" : "no"}`;
-    feedback.innerHTML = `${ok ? "✅ 正确" : "❌ 错误，正确答案："} <strong>${esc(w.word)}</strong> ${esc(w.phonetic)}`;
+    feedback.innerHTML = `<div>${ok ? "✅ 回答正确" : "❌ 回答错误"}</div>
+      <div>正确答案：<strong class="fb-word">${esc(w.word)}</strong>
+        <button type="button" class="speak-btn" id="writtenAnswerPlay${i}" aria-label="朗读正确答案 ${esc(w.word)}">🔊 播放读音</button></div>
+      <div>音标：${esc(w.phonetic || "暂无音标")}</div>
+      <div>词性：${esc(answerPartsOfSpeech(w.meaning))}</div>
+      <div>释义：${esc(w.meaning)}</div>`;
+    $(`#writtenAnswerPlay${i}`).onclick = () => speakWord(w.word);
   });
   $("#writtenSubmit").disabled = true;
   $("#quizProgressText").textContent = `已批改 ${q.pool.length} 题 · 对 ${correct} · 错 ${q.pool.length - correct}`;
@@ -577,6 +599,12 @@ function submitWrittenBatch() {
   next.textContent = q.retryWords.length ? "补测错词 →" : q.stage < QUIZ_STAGES.length - 1 ? "进入拼写测试 →" : "查看结果 🎉";
   next.classList.remove("hidden");
   next.onclick = advance;
+}
+
+function answerPartsOfSpeech(meaning) {
+  const names = { n: "名词", v: "动词", vt: "及物动词", vi: "不及物动词", adj: "形容词", adv: "副词", prep: "介词", conj: "连词", pron: "代词", num: "数词", int: "感叹词", interj: "感叹词", art: "冠词", aux: "助动词", det: "限定词" };
+  const tags = [...String(meaning || "").matchAll(/\b(n|v|vt|vi|adj|adv|prep|conj|pron|num|int|interj|art|aux|det)\./gi)].map(match => match[1].toLowerCase());
+  return [...new Set(tags)].map(tag => `${tag}. ${names[tag]}`).join(" / ") || "词库未标注";
 }
 
 function recordQuizAnswer(w, ok) {

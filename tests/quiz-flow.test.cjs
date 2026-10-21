@@ -5,6 +5,7 @@ const vm = require('node:vm');
 
 function app({ audioError = null } = {}) {
   const elements = new Map();
+  let focused = null;
   const spoken = [];
   const recordings = [];
   const synthesized = [];
@@ -18,7 +19,7 @@ function app({ audioError = null } = {}) {
           remove: (...names) => names.forEach(n => classes.delete(n)),
           contains: n => classes.has(n), toggle() {},
         },
-        setAttribute() {}, removeAttribute() {}, focus() {},
+        setAttribute() {}, removeAttribute() {}, focus() { focused = selector; this.onfocus?.(); },
         querySelector: () => null, querySelectorAll: () => [],
       });
     }
@@ -62,7 +63,7 @@ function app({ audioError = null } = {}) {
     QUIZ_ACTIVE = true;
     renderQuestion();
   `);
-  return { run, get, spoken, recordings, synthesized };
+  return { run, get, spoken, recordings, synthesized, focused: () => focused };
 }
 
 test('whole-batch dictation and spelling grade once and retry only mistakes', async () => {
@@ -99,7 +100,7 @@ test('whole-batch dictation and spelling grade once and retry only mistakes', as
   assert.equal(get('#writtenInput0').disabled, true);
   assert.match(get('#writtenFeedback0').innerHTML, /错误/);
   assert.match(get('#writtenFeedback1').innerHTML, /正确/);
-  assert.ok(!get('#writtenFeedback0').innerHTML.includes(run('q.pool[0].meaning')));
+  assert.ok(get('#writtenFeedback0').innerHTML.includes(run('q.pool[0].meaning')));
   run('submitWrittenBatch()');
   assert.equal(run('q.attempts'), 4, 'double submit ignored');
   run('advance()');
@@ -353,4 +354,59 @@ test('daily refresh resets after midnight and keeps previous days intact', () =>
   run('recordAnswer("apple", true); refreshDailyDisplay()');
   assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
   assert.equal(run('STATS.total.seen'), 2);
+});
+
+test('Tab moves directly between batch inputs, with automatic spelling audio and safe submit focus', () => {
+  for (const mode of ['dictation', 'spell']) {
+    const { run, get, spoken, recordings, focused } = app();
+    run(`q.mode = '${mode}'; q.stage = ${mode === 'spell' ? 2 : 1}; renderQuestion()`);
+    assert.equal(focused(), '#writtenInput0');
+    assert.equal(spoken.length, mode === 'spell' ? 1 : 0);
+    if (mode === 'spell') assert.equal(spoken[0], 'apple');
+    const tab = (selector, shiftKey = false) => {
+      let prevented = false;
+      get(selector).onkeydown({ key: 'Tab', shiftKey, preventDefault() { prevented = true; } });
+      return prevented;
+    };
+    assert.equal(tab('#writtenInput0'), true);
+    assert.equal(focused(), '#writtenInput1');
+    if (mode === 'spell') {
+      assert.equal(spoken.at(-1), 'pear');
+      assert.equal(recordings[0].paused, true, 'previous audio is stopped');
+    }
+    assert.equal(tab('#writtenInput1', true), true);
+    assert.equal(focused(), '#writtenInput0');
+    if (mode === 'spell') assert.equal(spoken.at(-1), 'apple');
+    assert.equal(tab('#writtenInput0', true), false, 'first input allows normal backward navigation');
+    tab('#writtenInput0');
+    tab('#writtenInput1');
+    assert.equal(focused(), '#writtenSubmit');
+    assert.equal(run('q.answered'), false);
+    assert.equal(run('q.attempts'), 0);
+    tab('#writtenSubmit', true);
+    assert.equal(focused(), '#writtenInput1');
+    const count = spoken.length;
+    run('q.answered = true');
+    get('#writtenInput0').focus();
+    assert.equal(spoken.length, count, 'graded inputs do not trigger audio');
+  }
+});
+
+test('graded written answers include pronunciation, meaning and all recorded parts of speech', async () => {
+  for (const mode of ['dictation', 'spell']) {
+    const { run, get, spoken } = app();
+    run(`q.pool = [{ word: 'test', phonetic: '/test/', meaning: 'n. 测试 v. 检验' }]; q.mode = '${mode}'; renderQuestion()`);
+    get('#writtenInput0').value = mode === 'spell' ? 'test' : 'wrong';
+    run('submitWrittenBatch()');
+    const feedback = get('#writtenFeedback0').innerHTML;
+    assert.match(feedback, /正确答案/);
+    assert.match(feedback, /\/test\//);
+    assert.match(feedback, /n\. 名词 \/ v\. 动词/);
+    assert.match(feedback, /释义：n\. 测试 v\. 检验/);
+    await get('#writtenAnswerPlay0').onclick();
+    assert.equal(spoken.at(-1), 'test');
+  }
+  const { run } = app();
+  assert.equal(run('answerPartsOfSpeech("自定义释义")'), '词库未标注');
+  assert.equal(run('answerPartsOfSpeech("n. 义项一 n. 义项二")'), 'n. 名词');
 });
