@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="简洁、专注的六级英语词汇学习工具">
 <title>拾词 · 六级词汇训练</title>
-<link rel="stylesheet" href="style.css?v=20261021-separate-favorites">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 </head>
 <body>
 <div class="app">
@@ -83,7 +83,7 @@
 
     <section id="view-learned" class="view">
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow">LEARNED WORDS</span><h2>已学单词</h2><p>整组通过选择、听写和拼写三轮测试后，单词会自动收录。可复习单个单词，也可选择数量，按当前筛选顺序复习。</p></div><div class="head-actions"><span class="muted count-pill" id="learnedCount"></span></div></div>
+        <div class="panel-head"><div><span class="eyebrow">LEARNED WORDS</span><h2>已学单词</h2><p>显示全部已完成单词及历史学习记录；历史记录会标注“完成状态未确认”。新学习仍需整组通过三轮测试才收录。可复习单个单词，也可选择数量，按当前筛选顺序复习。</p></div><div class="head-actions"><span class="muted count-pill" id="learnedCount"></span></div></div>
         <div class="review-controls">
           <label for="learnedReviewCount">复习 / 测试单词数</label>
           <select id="learnedReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
@@ -99,7 +99,7 @@
 
     <section id="view-wordbook" class="view">
       <div class="panel">
-        <div class="panel-head"><div><span class="eyebrow">MISTAKE BOOK</span><h2>错题本</h2><p>把难词留下，按自己的节奏慢慢掌握。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span></div></div>
+        <div class="panel-head"><div><span class="eyebrow">MISTAKE BOOK</span><h2>错题本</h2><p>只要答错过一次，就保留在错题本；之后答对或标为掌握也不会移出。</p></div><div class="head-actions"><span class="muted count-pill" id="wbCount"></span></div></div>
         <div class="review-controls">
           <label for="wbReviewCount">复习 / 测试单词数</label>
           <select id="wbReviewCount"><option value="10">10 个</option><option value="20" selected>20 个</option><option value="30">30 个</option><option value="50">50 个</option><option value="all">全部</option><option value="custom">自定义…</option></select>
@@ -109,7 +109,7 @@
         </div>
         <div class="list-filter"><input type="search" id="wbSearch" placeholder="搜索单词或释义…" aria-label="搜索错题本"><select id="wbFilter" aria-label="筛选错题本状态"><option value="all">全部</option><option value="learning">学习中</option><option value="mastered">已掌握</option></select><select hidden id="wbCategory" aria-label="筛选收藏栏目"><option value="all">全部栏目</option></select><select id="wbSort" aria-label="错题本排序方式"><option value="review">待复习优先</option><option value="wrong">错误次数优先</option><option value="recent">最近学习优先</option><option value="added">最近收藏优先</option></select></div>
         <div id="wbList" class="list"></div>
-        <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>开启自动收集错词后，答错的词会来到这里。收藏独立保存在收藏栏目。</p></div>
+        <div id="wbEmpty" class="empty hidden"><span>○</span><strong>这里还没有单词</strong><p>答错一次就会自动收录，历史错词也会补齐。收藏独立保存在收藏栏目。</p></div>
       </div>
     </section>
 
@@ -145,7 +145,7 @@
     <section id="view-settings" class="view">
       <div class="panel">
         <div class="page-heading"><span class="eyebrow">PREFERENCES</span><h2>设置</h2><p>调整学习习惯，管理你的词库和本地数据。</p></div>
-        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（单词数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><label class="toggle-row"><span><strong>自动收集错词</strong><small>答错后自动加入错题本，方便集中复习。</small></span><input type="checkbox" id="setAutoAdd" checked></label></div>
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><h3>学习偏好</h3><p>设定一个每天都容易坚持的目标。</p></div></div><div class="field"><label for="setGoal">每日目标（单词数）</label><div class="row"><input type="number" id="setGoal" min="5" max="500" value="20"><button class="btn primary" id="saveGoal">保存目标</button></div></div><p class="muted">错题本自动保留所有曾答错的词，后续答对不会移出。</p></div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><h3>添加自定义单词</h3><p>补充课堂、阅读或工作中遇到的新词。</p></div></div><div class="form-grid"><input type="text" id="addWord" placeholder="单词，如：algorithm" aria-label="自定义英文单词"><input type="text" id="addPhonetic" placeholder="音标，如：[ˈælɡərɪðəm]（可留空）" aria-label="自定义单词音标"><input type="text" id="addMeaning" placeholder="释义，如：n. 算法" aria-label="自定义单词释义"></div><button class="btn primary" id="addWordBtn">添加到词库</button></div>
         <div class="settings-section"><div class="settings-title"><span>03</span><div><h3>批量导入词表</h3><p>每行一个：<code>单词 [音标] 释义</code> 或 <code>单词 释义</code>。</p></div></div><textarea id="importText" rows="6" placeholder="algorithm [ˈælɡərɪðəm] n. 算法&#10;debug [ˌdiːˈbʌɡ] v. 调试" aria-label="批量导入词表内容"></textarea><div class="row"><button class="btn" id="importBtn">导入词表</button></div></div>
         <div class="settings-section settings-data"><div class="settings-title"><span>04</span><div><h3>数据备份</h3><p>所有记录仅保存在这台设备的浏览器中。</p></div></div><div class="row"><button class="btn" id="exportBtn">导出学习数据</button><label class="btn">导入学习数据<input type="file" id="importDataInput" accept=".json" hidden></label></div></div>
@@ -175,6 +175,14 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261021-separate-favorites"></script>
+<dialog class="word-dialog" id="storageConflictDialog" closedby="none" aria-labelledby="storageConflictTitle" aria-describedby="storageConflictDescription">
+  <form id="storageConflictForm">
+    <h2 id="storageConflictTitle">学习记录已更新</h2>
+    <p id="storageConflictDescription">另一页面更新了学习记录，请刷新后继续。未提交的答案不会保存。</p>
+    <div class="dialog-actions"><button type="button" class="btn primary" id="storageConflictReload">刷新并读取最新记录</button></div>
+  </form>
+</dialog>
+
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>

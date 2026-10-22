@@ -1,74 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-
-function app({ audioError = null } = {}) {
-  const elements = new Map();
-  let focused = null;
-  const spoken = [];
-  const recordings = [];
-  const synthesized = [];
-  const get = (selector) => {
-    if (!elements.has(selector)) {
-      const classes = new Set();
-      elements.set(selector, {
-        textContent: '', innerHTML: '', value: '', style: {}, dataset: {},
-        classList: {
-          add: (...names) => names.forEach(n => classes.add(n)),
-          remove: (...names) => names.forEach(n => classes.delete(n)),
-          contains: n => classes.has(n), toggle() {},
-        },
-        setAttribute() {}, removeAttribute() {}, focus() { focused = selector; this.onfocus?.(); },
-        querySelector: () => null, querySelectorAll: () => [],
-        insertAdjacentHTML(position, html) { this.innerHTML += html; },
-        showModal() { this.open = true; }, close() { this.open = false; },
-      });
-    }
-    return elements.get(selector);
-  };
-  const context = vm.createContext({
-    document: { querySelector: get, querySelectorAll: () => [] },
-    Audio: function() {
-      recordings.push(this);
-      this.pause = () => { this.paused = true; };
-      this.removeAttribute = () => {};
-      this.load = () => {};
-      this.play = () => {
-        spoken.push(new URL(this.src).searchParams.get('audio'));
-        return audioError ? Promise.reject(audioError) : Promise.resolve();
-      };
-    },
-    window: { speechSynthesis: {
-      cancel() {}, speak: u => synthesized.push(u),
-      getVoices: () => [
-        { name: 'Chinese', lang: 'zh-CN' },
-        { name: 'Samantha (Enhanced)', lang: 'en-US' },
-      ],
-    } },
-    SpeechSynthesisUtterance: function(text) { this.text = text; },
-    localStorage: { setItem() {} }, setTimeout, clearTimeout,
-  });
-  vm.runInContext(fs.readFileSync('web/app.js', 'utf8').replace(/init\(\);\s*$/, ''), context);
-  const run = code => vm.runInContext(code, context);
-  get("#learnedReviewCount").value = "20";
-  get("#wbReviewCount").value = "20";
-  get("#favReviewCount").value = "20";
-  run(`
-    WORDS = [
-      { word: 'apple', meaning: 'n. 苹果', phonetic: '/apple/' },
-      { word: 'pear', meaning: 'n. 梨', phonetic: '/pear/' }
-    ];
-    BYWORD = new Map(WORDS.map(w => [w.word, w]));
-    SETTINGS = { autoAddWrong: true, dailyGoal: 20 };
-    STATS = { total: { seen: 0, right: 0, wrong: 0 }, daily: {} };
-    Object.assign(q, { words: WORDS.slice(), pool: WORDS.slice(), mode: 'en2zh',
-      choiceMode: 'en2zh', stage: 0, retryRound: 0, retryWords: [], attempts: 0 });
-    QUIZ_ACTIVE = true;
-    renderQuestion();
-  `);
-  return { run, get, spoken, recordings, synthesized, focused: () => focused };
-}
+const { app } = require('./helpers/app-harness.cjs');
 
 test('whole-batch dictation and spelling grade once and retry only mistakes', async () => {
   const { run, get, spoken } = app();
@@ -81,14 +13,14 @@ test('whole-batch dictation and spelling grade once and retry only mistakes', as
   choose(); run('advance()'); choose(); run('advance()');
   assert.equal(run('q.mode'), 'dictation');
   assert.equal(run('q.pool.length'), 2);
-  assert.equal(spoken.length, 0, 'no overlapping automatic playback');
+  assert.equal(spoken.length, 1, 'only the focused dictation word plays automatically');
   assert.equal(get('#quizMeaning').textContent, '');
   assert.equal(get('#quizFeedback').innerHTML, '');
   assert.ok(!get('#quizOptions').innerHTML.includes('苹果'));
   assert.ok(!get('#quizOptions').innerHTML.includes('writtenHint'));
   assert.ok(get('#quizOptions').innerHTML.includes('writtenInput1'));
   await get('#writtenPlay1').onclick();
-  assert.equal(spoken[0], run('q.pool[1].word'));
+  assert.equal(spoken.at(-1), run('q.pool[1].word'));
   get('#writtenInput0').value = 'APPLE';
   get('#writtenInput1').value = '';
   run('submitWrittenBatch()');
@@ -241,7 +173,7 @@ test('both review modules honor preset, custom and all counts and reject invalid
       WORDS = Array.from({ length: 35 }, (_, i) => ({ word: 'word' + i, meaning: '词', phonetic: '' }));
       WSTATS = Object.fromEntries(WORDS.map(w => [w.word, { completedAt: 100, seen: 1, right: 1, wrong: 0 }]));
       BYWORD = new Map(WORDS.map(w => [w.word, w]));
-      WB = WORDS.map(w => ({ word: w.word }));
+      WB = WORDS.map(w => ({ word: w.word, wrong: 1 }));
       var started = null;
       startQuiz = (...args) => { started = args; };
     `);
@@ -372,13 +304,14 @@ test('daily refresh resets after midnight and keeps previous days intact', () =>
   assert.equal(run('STATS.total.seen'), 2);
 });
 
-test('Tab moves directly between batch inputs, with automatic spelling audio and safe submit focus', () => {
+test('Tab moves directly between batch inputs, with automatic dictation audio and safe submit focus', () => {
   for (const mode of ['dictation', 'spell']) {
     const { run, get, spoken, recordings, focused } = app();
-    run(`q.mode = '${mode}'; q.stage = ${mode === 'spell' ? 2 : 1}; renderQuestion()`);
+    run(`q.mode = '${mode}'; q.stage = ${mode === 'dictation' ? 1 : 2}; renderQuestion()`);
     assert.equal(focused(), '#writtenInput0');
-    assert.equal(spoken.length, mode === 'spell' ? 1 : 0);
-    if (mode === 'spell') assert.equal(spoken[0], 'apple');
+    assert.equal(get('#quizOptions').innerHTML.includes('id="writtenPlay0"'), mode === 'dictation');
+    assert.equal(spoken.length, mode === 'dictation' ? 1 : 0);
+    if (mode === 'dictation') assert.equal(spoken[0], 'apple');
     const tab = (selector, shiftKey = false) => {
       let prevented = false;
       get(selector).onkeydown({ key: 'Tab', shiftKey, preventDefault() { prevented = true; } });
@@ -386,13 +319,13 @@ test('Tab moves directly between batch inputs, with automatic spelling audio and
     };
     assert.equal(tab('#writtenInput0'), true);
     assert.equal(focused(), '#writtenInput1');
-    if (mode === 'spell') {
+    if (mode === 'dictation') {
       assert.equal(spoken.at(-1), 'pear');
       assert.equal(recordings[0].paused, true, 'previous audio is stopped');
     }
     assert.equal(tab('#writtenInput1', true), true);
     assert.equal(focused(), '#writtenInput0');
-    if (mode === 'spell') assert.equal(spoken.at(-1), 'apple');
+    if (mode === 'dictation') assert.equal(spoken.at(-1), 'apple');
     assert.equal(tab('#writtenInput0', true), false, 'first input allows normal backward navigation');
     tab('#writtenInput0');
     tab('#writtenInput1');
@@ -401,6 +334,7 @@ test('Tab moves directly between batch inputs, with automatic spelling audio and
     assert.equal(run('q.attempts'), 0);
     tab('#writtenSubmit', true);
     assert.equal(focused(), '#writtenInput1');
+    if (mode === 'spell') assert.equal(spoken.length, 0, 'all spelling focus changes remain silent');
     const count = spoken.length;
     run('q.answered = true');
     get('#writtenInput0').focus();
@@ -528,7 +462,7 @@ test('mistakes and favorites are independent when adding, reviewing and removing
   assert.equal(run('FAVORITES.length'), 1);
   run('removeFromWordbook("pear")');
   assert.equal(run('FAVORITES.length'), 1);
-  run('addToWordbook(WORDS[1]); removeFromWordbook("pear", "fav")');
+  run('removeFromWordbook("pear", "fav")');
   assert.equal(run('WB.length'), 2);
   assert.equal(run('FAVORITES.length'), 0);
 });
@@ -550,4 +484,97 @@ test('backup migration splits old mixed entries and preserves separate collectio
   assert.equal(run('restored.favorites.length'), 2);
   assert.equal(run('restored.wordbook.length'), 2);
   assert.throws(() => run('validateBackup({ ...backup, version: 6 })'), /invalid favorites/);
+});
+
+test('restore historical learning once without counting new incomplete sessions or today progress', () => {
+  const { run, get } = app();
+  run(`
+    WSTATS = restoreHistoricalLearning(normalizeWordStats({
+      apple: { seen: 3, right: 2, wrong: 1, lastAt: Date.now() },
+      pear: { seen: 3, right: 3, completedAt: 123 }
+    }), 6);
+    renderLearned(); updateGoal();
+  `);
+  assert.equal(run('buildPool("learned").length'), 2);
+  assert.equal(run('WSTATS.apple.completedAt'), 0);
+  assert.match(get('#learnedList').innerHTML, /历史学习记录 · 完成状态未确认/);
+  assert.match(get('#learnedList').innerHTML, /已完成三轮测试/);
+  assert.equal(get('#goalBadge').textContent, '今日 0/20 词');
+  run(`
+    WSTATS.pending = { seen: 1, wrong: 1 };
+    WSTATS = restoreHistoricalLearning(normalizeWordStats(JSON.parse(JSON.stringify(WSTATS))), 7);
+  `);
+  assert.equal(run('WSTATS.apple.historicalLearning'), true);
+  assert.equal(run('isLearnedRecord(WSTATS.pending)'), false);
+  run(`
+    q.words = [WORDS[0]]; q.stage = 2; q.answered = true; q.retryWords = [];
+    recordSessionCompletion(); renderLearned();
+  `);
+  assert.equal(run('WSTATS.apple.historicalLearning'), false);
+  assert.ok(run('WSTATS.apple.completedAt') > 0);
+  assert.ok(!get('#learnedList').innerHTML.includes('完成状态未确认'));
+  assert.equal(get('#goalBadge').textContent, '今日 1/20 词');
+});
+
+test('all learned entries render beyond 100 while filters still apply', () => {
+  const { run, get } = app();
+  run(`
+    WORDS = Array.from({ length: 205 }, (_, i) => ({ word: 'word' + i, meaning: '释义', phonetic: '' }));
+    WSTATS = Object.fromEntries(WORDS.map(w => [w.word, { seen: 3, right: 3, wrong: 0, completedAt: 1 }]));
+    renderLearned();
+  `);
+  assert.equal((get('#learnedList').innerHTML.match(/data-learned-review=/g) || []).length, 205);
+  assert.match(get('#learnedList').innerHTML, /word204/);
+  assert.equal(get('#learnedCount').textContent, '共 205 个 · 当前 205 个');
+  get('#learnedSearch').value = 'word204';
+  run('renderLearned()');
+  assert.equal((get('#learnedList').innerHTML.match(/data-learned-review=/g) || []).length, 1);
+});
+
+test('one wrong answer is kept even when collection was disabled or later marked mastered', () => {
+  const { run, get } = app();
+  run(`
+    SETTINGS.autoAddWrong = false;
+    recordQuizAnswer(WORDS[0], false);
+    recordQuizAnswer(WORDS[0], true);
+    recordQuizAnswer(WORDS[0], true);
+    setWbStatus('apple', 'mastered');
+    renderWordbook();
+  `);
+  assert.equal(run('WB.length'), 1);
+  assert.equal(run('WB[0].wrong'), 1);
+  assert.equal(run('WB[0].right'), 2);
+  assert.equal(run('filteredWordbook().length'), 1);
+  assert.ok(!get('#wbList').innerHTML.includes('data-wb-rm='));
+  run('removeFromWordbook("apple"); reconcileMistakeBook()');
+  assert.equal(run('WB.length'), 1);
+  assert.equal(run('WB[0].status'), 'mastered');
+  assert.equal(run('FAVORITES.length'), 0);
+});
+
+test('missing historical mistakes are restored from cumulative wrong counts without duplicates', () => {
+  const { run } = app();
+  run(`
+    WSTATS = normalizeWordStats({ apple: { seen: 9, right: 8, wrong: 1, lastAt: 200 } });
+    WB = normalizeWordbook([{ word: 'pear', wrong: 2, status: 'mastered' }]);
+    reconcileMistakeBook(); reconcileMistakeBook();
+  `);
+  assert.equal(run('WB.length'), 2);
+  assert.equal(run('WB.find(w => w.word === "apple").wrong'), 1);
+  assert.equal(run('WB.find(w => w.word === "apple").right'), 8);
+  assert.equal(run('WB.find(w => w.word === "pear").status'), 'mastered');
+  assert.equal(run('buildPool("wordbook").length'), 2);
+});
+
+test('older backups restore uncertain history but current backups retain unfinished status', () => {
+  const { run } = app();
+  run(`
+    var backup = { version: 6, custom: [], wordbook: [], favorites: [],
+      wordstats: { apple: { seen: 1, wrong: 1 } }, stats: {}, settings: { autoAddWrong: false } };
+    var older = validateBackup(backup);
+    var current = validateBackup({ ...backup, version: 7 });
+  `);
+  assert.equal(run('older.wordstats.apple.historicalLearning'), true);
+  assert.equal(run('older.settings.autoAddWrong'), true);
+  assert.equal(run('current.wordstats.apple.historicalLearning'), false);
 });
